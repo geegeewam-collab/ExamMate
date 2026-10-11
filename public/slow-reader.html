@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Slow Reader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&display=swap">
+<style>
+:root{color-scheme:light dark;--paper:#f3f6fc;--slip:#fbfcff;--rule:#cfdcf0;--ink:#14213d;--edge:#14213d;--mute:#56668a;--hand:#1b3fcf;--red:#d1323a;--hl:#ffe14d;--btn:#ffe14d;--acc:#1b3fcf;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root{--paper:#1c2723;--slip:#243531;--rule:rgba(255,255,255,.06);--ink:#f1efe6;--edge:rgba(241,239,230,.7);--mute:#a7b8ae;--hand:#f1efe6;--red:#ff8a80;--hl:rgba(255,216,77,.3);--btn:#ffd84d;--acc:#ffd84d}}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:linear-gradient(90deg,transparent 22px,var(--red) 22px 24px,transparent 24px),repeating-linear-gradient(transparent 0 31px,var(--rule) 31px 32px),var(--paper)}
+main{max-width:560px;margin:0 auto;padding:22px 16px 56px 40px}
+header{margin:4px 0 26px}
+h1{margin:0 0 8px;display:inline-block;font:700 clamp(3.4rem,17vw,5rem)/1 Caveat,"Segoe Print","Bradley Hand",cursive;color:var(--hand);transform:rotate(-1.5deg);transform-origin:left;text-decoration:underline double var(--red) 3px;text-underline-offset:.1em}
+.sub{margin:6px 0 0;color:var(--mute);max-width:32ch}
+.card{background:var(--slip);border:2px solid var(--edge);border-radius:3px;box-shadow:4px 4px 0 var(--edge);padding:16px;margin-bottom:24px}
+textarea{display:block;width:100%;min-height:160px;resize:vertical;border:2px solid var(--edge);border-radius:3px;padding:0 12px;font:inherit;line-height:32px;color:var(--ink);background:repeating-linear-gradient(transparent 0 31px,var(--rule) 31px 32px) local,var(--slip)}
+button,select{font:inherit;color:var(--ink)}
+button{min-height:54px;padding:0 16px;border:2px solid var(--edge);border-radius:999px;background:var(--slip);box-shadow:3px 3px 0 var(--edge);font-weight:700;cursor:pointer;transition:transform .1s,box-shadow .1s}
+button:active{transform:translate(3px,3px);box-shadow:0 0 0 var(--edge)}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--acc);outline-offset:3px}
+button.p{background:var(--btn);color:#17202b}
+.row{display:flex;gap:12px;margin-top:14px}.row>button{flex:1}
+#cam{flex:1.6;min-height:64px;font-size:1.1rem}
+.row3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+.row2{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:14px}
+#now{display:none;box-shadow:5px 5px 0 var(--red)}
+#cur{display:block;min-height:4.6em;font:700 clamp(2.3rem,11vw,3.3rem)/1.2 Caveat,"Segoe Print","Bradley Hand",cursive;color:var(--hand);overflow-wrap:anywhere}
+#cur.in{animation:rise .35s ease-out}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}}
+mark{color:inherit;background:linear-gradient(transparent 52%,var(--hl) 52%);-webkit-box-decoration-break:clone;box-decoration-break:clone;padding:0 .12em}
+#bar{height:6px;border-radius:3px;background:var(--rule);overflow:hidden;margin:12px 0 8px}
+#gap{height:100%;width:0;background:var(--red)}
+#prog{color:var(--mute);font-size:.9rem;font-variant-numeric:tabular-nums}
+label{display:block;font-weight:700;margin:16px 0 6px}
+label span{float:right;color:var(--mute);font-weight:500}
+input[type=range]{width:100%;accent-color:var(--acc)}
+select,input[type=password]{display:block;width:100%;min-height:50px;border:2px solid var(--edge);border-radius:3px;background:var(--slip);color:var(--ink);padding:0 10px;font:inherit}
+.ck{font-weight:500;display:flex;align-items:center;margin:16px 0 4px}
+input[type=checkbox]{width:22px;height:22px;margin:0 12px 0 0;accent-color:var(--acc)}
+input[type=file]{width:100%;margin-top:4px;color:var(--mute)}
+.note{color:var(--mute);font-size:.88rem}
+#msg{color:var(--red);min-height:1.4em;margin-top:8px;font-weight:700}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<header><h1>Slow Reader</h1><p class="sub">Snap a photo or paste text. It reads in short phrases, then waits while you write.</p></header>
+
+<section class="card" id="now" aria-live="polite">
+  <div id="cur"></div>
+  <div id="bar"><div id="gap"></div></div>
+  <div id="prog"></div>
+  <div class="row3"><button id="back">Back</button><button id="rep">Repeat</button><button id="next">Next</button></div>
+  <div class="row2"><button id="pause" class="p">Pause</button><button id="stop">Stop</button></div>
+</section>
+
+<section class="card" id="snapcard">
+  <label style="margin-top:0">Snap the questions</label>
+  <div class="row"><button id="cam" class="p">Take photo</button><button id="gal">Choose photo</button></div>
+  <label for="style">Answers</label>
+  <select id="style"><option value="short">Short answers only</option><option value="work">Answer plus brief working</option></select>
+  <label class="ck"><input type="checkbox" id="auto">Start reading when answers are ready</label>
+  <label for="pass">Passcode</label>
+  <input type="password" id="pass" autocomplete="off">
+  <div id="snapmsg" class="note" aria-live="polite"></div>
+  <div class="row"><button id="sx" hidden>Stop</button></div>
+  <p class="note">Answers are written by an AI model. Check them before relying on them.</p>
+  <input type="file" id="fcam" accept="image/*" capture="environment" hidden>
+  <input type="file" id="fgal" accept="image/*" multiple hidden>
+</section>
+
+<section class="card">
+  <textarea id="t" placeholder="Paste or type the text to read…" aria-label="Text to read"></textarea>
+  <div class="row"><button id="start" class="p">Start</button><button id="pg">Paste + start</button><button id="clr">Clear</button></div>
+  <label for="file">Or load a file (.txt, .docx, .pdf)</label>
+  <input type="file" id="file" accept=".txt,.md,.docx,.pdf,text/plain,application/pdf">
+  <div id="msg"></div>
+</section>
+
+<section class="card">
+  <label style="margin-top:0">Presets</label>
+  <div class="row3"><button id="pn">Notes</button><button id="pc">Careful</button><button id="pr">Normal</button></div>
+  <label for="rate">Speed <span id="rv"></span></label>
+  <input type="range" id="rate" min="0.1" max="1.2" step="0.05">
+  <label for="gapS">Pause between phrases <span id="gv"></span></label>
+  <input type="range" id="gapS" min="0" max="15" step="0.5">
+  <label for="pw">Extra writing time per word <span id="pv"></span></label>
+  <input type="range" id="pw" min="0" max="2" step="0.25">
+  <label for="mode">Phrase size</label>
+  <select id="mode">
+    <option value="sentence">Whole sentence</option>
+    <option value="clause">Up to each comma</option>
+    <option value="w5">5 words at a time</option>
+    <option value="w3">3 words at a time</option>
+    <option value="w2">2 words at a time</option>
+  </select>
+  <label for="adv">After each phrase</label>
+  <select id="adv"><option value="timer">Wait for the pause timer</option><option value="tap">Wait until I tap</option></select>
+  <label class="ck"><input type="checkbox" id="twice">Read each phrase twice</label>
+  <label class="ck"><input type="checkbox" id="punct">Say punctuation aloud</label>
+  <label for="lead">Start countdown</label>
+  <select id="lead"><option value="0">None</option><option value="3">3 seconds</option><option value="5">5 seconds</option></select>
+  <label for="voice">Voice</label>
+  <select id="voice"><option value="">Phone default</option></select>
+</section>
+
+<p class="note">Keep the screen on while it reads; the page asks your phone to stay awake. Earbuds and Bluetooth speakers work as usual. Voices marked offline keep working without internet. Changing phrase size takes effect on the next Start.</p>
+</main>
+
+<script>
+const $=id=>document.getElementById(id), S=window.speechSynthesis;
+let phrases=[],idx=0,state='idle',timer=null,session=0,wl=null,voices=[],waiting=null;
+const store={
+  get(k,d){try{const v=localStorage.getItem('sr_'+k);return v===null?d:v}catch(e){return d}},
+  set(k,v){try{localStorage.setItem('sr_'+k,v)}catch(e){}}
+};
+const say=m=>{$('msg').textContent=m};
+
+// settings
+$('rate').value=store.get('rate','0.5');
+$('gapS').value=store.get('gap','2');
+$('pw').value=store.get('pw','0.75');
+$('mode').value=store.get('mode','clause');
+function labels(){$('rv').textContent=(+$('rate').value).toFixed(2)+'x';$('gv').textContent=(+$('gapS').value)+' s';$('pv').textContent=(+$('pw').value)+' s'}
+['rate','gapS','pw','mode','voice'].forEach(k=>$(k).addEventListener('input',()=>{store.set(k==='gapS'?'gap':k,$(k).value);labels()}));
+labels();
+
+$('adv').value=store.get('adv','timer');$('lead').value=store.get('lead','0');
+$('twice').checked=store.get('twice','0')==='1';$('punct').checked=store.get('punct','0')==='1';
+['adv','lead'].forEach(k=>$(k).addEventListener('input',()=>store.set(k,$(k).value)));
+['twice','punct'].forEach(k=>$(k).addEventListener('change',()=>store.set(k,$(k).checked?'1':'0')));
+
+// voices
+function loadVoices(){
+  if(!S)return;
+  voices=S.getVoices();if(!voices.length)return;
+  const lang=(navigator.language||'en').slice(0,2), saved=store.get('voice','');
+  const sorted=[...voices].sort((a,b)=>(b.lang.startsWith(lang)-a.lang.startsWith(lang))||a.name.localeCompare(b.name));
+  const sel=$('voice');sel.innerHTML='<option value="">Phone default</option>';
+  sorted.forEach(v=>{const o=document.createElement('option');o.value=v.voiceURI;o.textContent=v.name+' ('+v.lang+')'+(v.localService?' - offline':'');sel.appendChild(o)});
+  sel.value=voices.some(v=>v.voiceURI===saved)?saved:'';
+}
+if(S){S.onvoiceschanged=loadVoices;loadVoices()}else say('This browser has no speech support. Try Chrome or Safari.');
+
+// splitting
+function split(text,mode){
+  const n={w2:2,w3:3,w5:5}[mode];
+  const end=mode==='sentence'?/[.!?…]["'”’)\]]*$/:/[.!?…,;:—–]["'”’)\]]*$/;
+  const out=[];
+  text.split(/\n+/).forEach(line=>{
+    let cur=[];
+    line.trim().split(/\s+/).filter(Boolean).forEach(w=>{
+      cur.push(w);
+      if(end.test(w)||(n&&cur.length>=n)){out.push(cur.join(' '));cur=[]}
+    });
+    if(cur.length)out.push(cur.join(' '));
+  });
+  return out;
+}
+
+// wake lock
+async function wake(){try{if('wakeLock' in navigator&&!wl){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>{wl=null})}}catch(e){}}
+function unwake(){try{wl&&wl.release()}catch(e){}wl=null}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&state==='playing')wake()});
+
+// playback
+function bar(sec){
+  const g=$('gap');g.style.transition='none';g.style.width='100%';
+  if(sec>0){void g.offsetWidth;g.style.transition='width '+sec+'s linear';g.style.width='0'}else g.style.width='0';
+}
+function render(){
+  const c=$('cur'),mk=document.createElement('mark');mk.textContent=phrases[idx]||'';c.replaceChildren(mk);c.classList.remove('in');void c.offsetWidth;c.classList.add('in');
+  $('prog').textContent=(idx+1)+' of '+phrases.length;
+  $('pause').textContent=state==='paused'?'Resume':'Pause';
+}
+function run(i,pass){
+  pass=pass||1;waiting=null;clearTimeout(timer);
+  if(i<0)i=0;
+  if(i>=phrases.length){finish();return}
+  idx=i;state='playing';
+  const my=++session;
+  S.cancel();
+  render();$('gap').style.transition='none';$('gap').style.width='0';
+  let tx=phrases[i];
+  if($('punct').checked)tx=tx.replace(/([,;:.?!])(?=\s|$)/g,m=>' '+({',':'comma',';':'semicolon',':':'colon','.':'full stop','?':'question mark','!':'exclamation mark'}[m])+' ');
+  const u=new SpeechSynthesisUtterance(tx);
+  u.rate=+$('rate').value;
+  const v=voices.find(x=>x.voiceURI===$('voice').value);
+  if(v){u.voice=v;u.lang=v.lang}
+  u.onstart=()=>{spoke=1};
+  u.onend=()=>{
+    if(my!==session||state!=='playing')return;
+    const twice=$('twice').checked, again=twice&&pass===1;
+    let g=+$('gapS').value+phrases[idx].split(/\s+/).length*(+$('pw').value);
+    if(twice&&pass===2)g=Math.max(1,g/2);
+    const go=()=>run(again?idx:idx+1,again?2:1);
+    if($('adv').value==='tap'){waiting=go;$('prog').textContent=(idx+1)+' of '+phrases.length+'. Tap anywhere to continue.';return}
+    bar(g);
+    timer=setTimeout(go,g*1000);
+  };
+  u.onerror=e=>{
+    if(my!==session||e.error==='interrupted'||e.error==='canceled')return;
+    timer=setTimeout(()=>run(idx+1),400);
+  };
+  S.speak(u);
+}
+function finish(){
+  state='idle';session++;clearTimeout(timer);unwake();
+  $('cur').textContent='Finished.';$('prog').textContent=phrases.length+' phrases read';
+  $('gap').style.width='0';$('pause').textContent='Pause';
+}
+function start(){
+  if(!S)return;
+  const text=$('t').value.trim();
+  if(!text){say('Paste some text first.');return}
+  phrases=split(text,$('mode').value);
+  if(!phrases.length){say('Nothing readable in that text.');return}
+  say('');$('now').style.display='block';
+  wake();
+  $('now').scrollIntoView({block:'start'});
+  let c=+$('lead').value;
+  if(c>0){
+    prime();state='counting';clearTimeout(timer);
+    const my=++session;$('prog').textContent='';
+    const tick=()=>{if(my!==session)return;if(c<=0){run(0);return}$('cur').textContent='Starting in '+c+'…';c--;timer=setTimeout(tick,1000)};
+    tick();
+  }else run(0);
+}
+function prime(){try{const p=new SpeechSynthesisUtterance(' ');p.volume=0;S.speak(p)}catch(e){}}
+
+$('start').onclick=start;
+document.addEventListener('click',e=>{if(waiting&&!e.target.closest('button,input,select,textarea,label,a')){const f=waiting;waiting=null;f()}});
+function preset(r,g,w,m,tw){
+  $('rate').value=r;$('gapS').value=g;$('pw').value=w;$('mode').value=m;$('twice').checked=tw;
+  store.set('rate',r);store.set('gap',g);store.set('pw',w);store.set('mode',m);store.set('twice',tw?'1':'0');
+  labels();say('Preset applied. Phrase size changes on the next Start.');
+}
+$('pn').onclick=()=>preset(0.5,2,0.75,'w3',false);
+$('pc').onclick=()=>preset(0.4,3,1.25,'w2',true);
+$('pr').onclick=()=>preset(0.9,0.5,0,'sentence',false);
+function loadScript(u){return new Promise((ok,no)=>{const e=document.createElement('script');e.src=u;e.onload=ok;e.onerror=no;document.head.appendChild(e)})}
+$('file').addEventListener('change',async ev=>{
+  const f=ev.target.files[0];if(!f)return;
+  const n=f.name.toLowerCase();say('Reading '+f.name+'…');
+  try{
+    let text='';
+    if(n.endsWith('.docx')){
+      if(!window.mammoth)await loadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js');
+      text=(await mammoth.extractRawText({arrayBuffer:await f.arrayBuffer()})).value;
+    }else if(n.endsWith('.pdf')){
+      if(!window.pdfjsLib){
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+        pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      }
+      const pdf=await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise;
+      for(let k=1;k<=pdf.numPages;k++){const c=await (await pdf.getPage(k)).getTextContent();text+=c.items.map(x=>x.str).join(' ')+'\n'}
+    }else text=await f.text();
+    text=text.trim();
+    if(!text){say('No readable text found. A scanned PDF is only a picture and cannot be read.');return}
+    $('t').value=text;say('Loaded '+text.split(/\s+/).length+' words. Press Start.');
+  }catch(err){say('Could not read that file. Copy the text and paste it into the box instead.')}
+  ev.target.value='';
+});
+// snap questions
+let spoke=0,ctl=null;
+const ERR={401:'Wrong passcode.',413:'Photo too large. Try fewer or smaller photos.',429:'Free limit reached. Try again in a minute.'};
+$('style').value=store.get('style','short');$('auto').checked=store.get('auto','1')==='1';$('pass').value=store.get('pass','');
+$('style').addEventListener('input',()=>store.set('style',$('style').value));
+$('auto').addEventListener('change',()=>store.set('auto',$('auto').checked?'1':'0'));
+$('pass').addEventListener('input',()=>store.set('pass',$('pass').value));
+const toURL=b=>new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(b)});
+async function shrink(f){
+  try{
+    const b=await createImageBitmap(f,{imageOrientation:'from-image'});
+    const k=Math.min(1,1600/Math.max(b.width,b.height)),c=document.createElement('canvas');
+    c.width=Math.round(b.width*k);c.height=Math.round(b.height*k);
+    c.getContext('2d').drawImage(b,0,0,c.width,c.height);
+    return await new Promise(r=>c.toBlob(x=>r(x||f),'image/jpeg',.8));
+  }catch(e){return f}
+}
+async function snap(files){
+  if(!files.length)return;
+  const m=$('snapmsg');
+  if(!$('pass').value){m.textContent='Enter your passcode first.';return}
+  ctl=new AbortController();$('sx').hidden=false;wake();m.textContent='Reading the photo and writing answers…';
+  try{
+    const images=await Promise.all(files.slice(0,3).map(async f=>toURL(await shrink(f))));
+    const res=await fetch('/api/answer',{method:'POST',headers:{'content-type':'application/json','x-passcode':$('pass').value},body:JSON.stringify({images,style:$('style').value}),signal:ctl.signal});
+    const d=await res.json().catch(()=>({}));
+    if(!res.ok)throw {status:res.status,msg:d.error};
+    $('t').value=d.text.trim();
+    m.textContent='Answers ready.';
+    if($('auto').checked){
+      spoke=0;start();
+      setTimeout(()=>{if(!spoke&&state!=='idle')$('prog').textContent='No sound? Tap Pause, then Resume.'},3000+(+$('lead').value)*1000);
+    }else unwake();
+  }catch(e){
+    unwake();
+    m.textContent=e&&e.name==='AbortError'?'Stopped.':(e&&(ERR[e.status]||e.msg))||'Something went wrong. Check your connection and try again.';
+  }finally{$('sx').hidden=true}
+}
+$('cam').onclick=()=>{prime();$('fcam').click()};
+$('gal').onclick=()=>{prime();$('fgal').click()};
+['fcam','fgal'].forEach(id=>$(id).addEventListener('change',ev=>{const f=[...ev.target.files];ev.target.value='';snap(f)}));
+$('sx').onclick=()=>{if(ctl)ctl.abort()};
+
+$('clr').onclick=()=>{$('t').value='';say('');$('t').focus()};
+$('pg').onclick=async()=>{
+  prime();
+  try{
+    const c=await navigator.clipboard.readText();
+    if(c&&c.trim()){$('t').value=c;store.set('text',c)}
+  }catch(e){
+    if(!$('t').value.trim()){say('Your phone blocked clipboard access. Press and hold in the box, choose Paste, then press Start.');return}
+  }
+  start();
+};
+$('pause').onclick=()=>{
+  if(state==='playing'){state='paused';waiting=null;session++;clearTimeout(timer);S.cancel();render()}
+  else if(state==='paused'){run(idx)}
+};
+$('back').onclick=()=>{if(phrases.length)run(idx-1)};
+$('rep').onclick=()=>{if(phrases.length)run(idx)};
+$('next').onclick=()=>{if(phrases.length)run(idx+1)};
+$('stop').onclick=()=>{state='idle';waiting=null;session++;clearTimeout(timer);S&&S.cancel();unwake();$('now').style.display='none'};
+</script>
+</body>
+</html>
