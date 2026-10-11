@@ -6,48 +6,59 @@
 <title>Slow Reader</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Caveat:wght@700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap">
 <style>
-:root{color-scheme:light dark;--paper:#f3f6fc;--slip:#fbfcff;--rule:#cfdcf0;--ink:#14213d;--edge:#14213d;--mute:#56668a;--hand:#1b3fcf;--red:#d1323a;--hl:#ffe14d;--btn:#ffe14d;--acc:#1b3fcf;
+:root{color-scheme:light dark;--bg:#efe9e1;--g1:rgba(255,206,140,.8);--g2:rgba(255,255,255,.75);--glass:rgba(255,255,255,.6);--gb:rgba(255,255,255,.85);--ink:#1d1b18;--mute:#6f675d;--sh:0 18px 40px -20px rgba(90,60,30,.5);--btn:rgba(255,255,255,.78);--o:linear-gradient(160deg,#ffd3a1,#f7a047 70%,#ee8a22);--gr:linear-gradient(160deg,#127a56,#0a4a36 60%,#06382a);--acc:#0f6b4c;
 box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root{--paper:#1c2723;--slip:#243531;--rule:rgba(255,255,255,.06);--ink:#f1efe6;--edge:rgba(241,239,230,.7);--mute:#a7b8ae;--hand:#f1efe6;--red:#ff8a80;--hl:rgba(255,216,77,.3);--btn:#ffd84d;--acc:#ffd84d}}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1410;--g1:rgba(255,140,60,.28);--g2:rgba(40,160,110,.22);--glass:rgba(255,255,255,.07);--gb:rgba(255,255,255,.13);--ink:#f4efe8;--mute:#a4b0a8;--sh:0 18px 40px -20px #000;--btn:rgba(255,255,255,.1);--acc:#4fd1a1}}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:linear-gradient(90deg,transparent 22px,var(--red) 22px 24px,transparent 24px),repeating-linear-gradient(transparent 0 31px,var(--rule) 31px 32px),var(--paper)}
-main{max-width:560px;margin:0 auto;padding:22px 16px 56px 40px}
-header{margin:4px 0 26px}
-h1{margin:0 0 8px;display:inline-block;font:700 clamp(3.4rem,17vw,5rem)/1 Caveat,"Segoe Print","Bradley Hand",cursive;color:var(--hand);transform:rotate(-1.5deg);transform-origin:left;text-decoration:underline double var(--red) 3px;text-underline-offset:.1em}
-.sub{margin:6px 0 0;color:var(--mute);max-width:32ch}
-.card{background:var(--slip);border:2px solid var(--edge);border-radius:3px;box-shadow:4px 4px 0 var(--edge);padding:16px;margin-bottom:24px}
-textarea{display:block;width:100%;min-height:160px;resize:vertical;border:2px solid var(--edge);border-radius:3px;padding:0 12px;font:inherit;line-height:32px;color:var(--ink);background:repeating-linear-gradient(transparent 0 31px,var(--rule) 31px 32px) local,var(--slip)}
+body{margin:0;min-height:100vh;color:var(--ink);font:16px/1.5 Manrope,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:radial-gradient(420px 360px at 100% 0,var(--g1),transparent 70%),radial-gradient(380px 420px at 0 30%,var(--g2),transparent 70%),var(--bg)}
+body::before{content:"";position:fixed;z-index:-1;right:-70px;top:340px;width:170px;height:160px;border-radius:52% 48% 55% 45%;background:radial-gradient(circle at 35% 30%,#efece7,#b9b4ac);opacity:.75}
+body::after{content:"";position:fixed;z-index:-1;right:-14px;bottom:70px;width:92px;height:50px;border-radius:0 100% 0 100%;transform:rotate(-28deg);background:linear-gradient(160deg,#1d9a6c,#0a4a36)}
+main{max-width:560px;margin:0 auto;padding:26px 16px 56px}
+header{margin:6px 4px 22px}
+h1{margin:0;font:800 clamp(2.4rem,11vw,3.2rem)/1 Manrope,system-ui,sans-serif;letter-spacing:-.04em}
+h2{margin:0 0 4px;font:800 1.3rem/1.2 Manrope,system-ui,sans-serif;letter-spacing:-.02em}
+.sub{margin:8px 0 0;color:var(--mute);max-width:34ch}
+.card{background:var(--glass);border:1px solid var(--gb);border-radius:30px;box-shadow:var(--sh),inset 0 1px 0 rgba(255,255,255,.5);padding:20px;margin-bottom:18px;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.hero{color:#eaf5ef;border-color:rgba(255,255,255,.2);background:linear-gradient(115deg,transparent 40%,rgba(80,230,170,.28) 52%,transparent 64%),var(--gr)}
+.hero h2{color:#fff}.hero label,.hero .note,.hero summary{color:#e3f2ea}
+.hero select,.hero input[type=password]{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.28);color:#fff}
+.hero button{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.3);color:#fff;box-shadow:none}
+.hero #cam{background:#fff4e2;color:#0a3a2b;border-color:transparent}
+textarea{display:block;width:100%;min-height:150px;resize:vertical;border:1px solid var(--gb);border-radius:20px;padding:14px;font:inherit;background:var(--btn);color:var(--ink)}
 button,select{font:inherit;color:var(--ink)}
-button{min-height:54px;padding:0 16px;border:2px solid var(--edge);border-radius:999px;background:var(--slip);box-shadow:3px 3px 0 var(--edge);font-weight:700;cursor:pointer;transition:transform .1s,box-shadow .1s}
-button:active{transform:translate(3px,3px);box-shadow:0 0 0 var(--edge)}
+button{min-height:54px;padding:0 18px;border:1px solid var(--gb);border-radius:999px;background:var(--btn);font-weight:700;box-shadow:0 10px 20px -12px rgba(60,40,20,.5);cursor:pointer;transition:transform .12s}
+button:active{transform:scale(.96)}
 button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--acc);outline-offset:3px}
-button.p{background:var(--btn);color:#17202b}
+button.p{background:var(--gr);color:#fff;border-color:transparent}
 .row{display:flex;gap:12px;margin-top:14px}.row>button{flex:1}
-#cam{flex:1.6;min-height:64px;font-size:1.1rem}
-.row3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
-.row2{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-top:14px}
-#now{display:none;box-shadow:5px 5px 0 var(--red)}
-#cur{display:block;min-height:4.6em;font:700 clamp(2.3rem,11vw,3.3rem)/1.2 Caveat,"Segoe Print","Bradley Hand",cursive;color:var(--hand);overflow-wrap:anywhere}
+#cam{flex:1.6;min-height:62px;font-size:1.08rem}
+.row3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.row2{display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-top:14px}
+#now{display:none;color:#2a1604;border-color:rgba(255,255,255,.55);background:linear-gradient(200deg,rgba(255,255,255,.5),transparent 45%),var(--o)}
+#cur{display:block;min-height:4.8em;font:700 clamp(1.9rem,8.5vw,2.6rem)/1.15 Manrope,system-ui,sans-serif;letter-spacing:-.02em;overflow-wrap:anywhere}
 #cur.in{animation:rise .35s ease-out}
-@keyframes rise{from{opacity:0;transform:translateY(10px)}}
-mark{color:inherit;background:linear-gradient(transparent 52%,var(--hl) 52%);-webkit-box-decoration-break:clone;box-decoration-break:clone;padding:0 .12em}
-#bar{height:6px;border-radius:3px;background:var(--rule);overflow:hidden;margin:12px 0 8px}
-#gap{height:100%;width:0;background:var(--red)}
-#prog{color:var(--mute);font-size:.9rem;font-variant-numeric:tabular-nums}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}}
+mark{color:inherit;background:linear-gradient(transparent 62%,rgba(255,255,255,.6) 62%);-webkit-box-decoration-break:clone;box-decoration-break:clone}
+#bar{height:8px;border-radius:4px;background:rgba(42,22,4,.15);overflow:hidden;margin:12px 0 8px}
+#gap{height:100%;width:0;background:#fff;border-radius:4px}
+#prog{color:rgba(42,22,4,.7);font-size:.9rem;font-variant-numeric:tabular-nums}
+#qs{max-height:280px;overflow:auto;position:relative;margin-top:6px}
+button.q{display:block;width:100%;min-height:0;max-height:4.4em;overflow:hidden;margin-top:8px;padding:12px 16px;border-radius:18px;text-align:left;font-weight:600;line-height:1.3;white-space:pre-line;box-shadow:none}
+button.q.cur{background:var(--o);color:#2a1604;border-color:transparent}
 label{display:block;font-weight:700;margin:16px 0 6px}
 label span{float:right;color:var(--mute);font-weight:500}
 input[type=range]{width:100%;accent-color:var(--acc)}
-select,input[type=password]{display:block;width:100%;min-height:50px;border:2px solid var(--edge);border-radius:3px;background:var(--slip);color:var(--ink);padding:0 10px;font:inherit}
+select,input[type=password]{display:block;width:100%;min-height:50px;border:1px solid var(--gb);border-radius:16px;background:var(--btn);color:var(--ink);padding:0 12px;font:inherit}
 .ck{font-weight:500;display:flex;align-items:center;margin:16px 0 4px}
 input[type=checkbox]{width:22px;height:22px;margin:0 12px 0 0;accent-color:var(--acc)}
 input[type=file]{width:100%;margin-top:4px;color:var(--mute)}
 .note{color:var(--mute);font-size:.88rem}
-summary{font-weight:700;cursor:pointer;min-height:44px;display:flex;align-items:center}
+summary{font-weight:800;cursor:pointer;min-height:44px;display:flex;align-items:center}
 #ebl{margin:8px 0 0;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;color:var(--mute)}
-#msg{color:var(--red);min-height:1.4em;margin-top:8px;font-weight:700}
+#msg{color:var(--acc);min-height:1.4em;margin-top:8px;font-weight:700}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -63,8 +74,10 @@ summary{font-weight:700;cursor:pointer;min-height:44px;display:flex;align-items:
   <div class="row2"><button id="pause" class="p">Pause</button><button id="stop">Stop</button></div>
 </section>
 
-<section class="card" id="snapcard">
-  <label style="margin-top:0">Snap the questions</label>
+<section class="card" id="qcard" hidden><h2>Questions</h2><p class="note">Tap one to read it. Reading carries on from there.</p><div id="qs"></div></section>
+
+<section class="card hero" id="snapcard">
+  <h2>Snap the questions</h2>
   <div class="row"><button id="cam" class="p">Take photo</button><button id="gal">Choose photo</button></div>
   <label for="style">Answers</label>
   <select id="style"><option value="short">Short answers only</option><option value="work">Answer plus brief working</option></select>
@@ -74,6 +87,7 @@ summary{font-weight:700;cursor:pointer;min-height:44px;display:flex;align-items:
   <div id="snapmsg" class="note" aria-live="polite"></div>
   <div class="row"><button id="sx" hidden>Stop</button></div>
   <p class="note">Answers are written by an AI model. Check them before relying on them.</p>
+  <p class="note" id="cnt"></p>
   <input type="file" id="fcam" accept="image/*" capture="environment" hidden>
   <input type="file" id="fgal" accept="image/*" multiple hidden>
 </section>
@@ -116,6 +130,7 @@ summary{font-weight:700;cursor:pointer;min-height:44px;display:flex;align-items:
 <details class="card"><summary>Earbud controls</summary>
 <p class="note">Tap once to pause or resume. Next skips to the next phrase. Previous repeats the phrase; press it twice quickly to go back one. Commands from your earbuds show below.</p>
 <div class="note" id="ebs"></div><pre id="ebl"></pre></details>
+<details class="card" id="hist"><summary>History</summary><div id="hl"></div><div class="row"><button id="hclr">Clear history</button></div></details>
 
 <p class="note">Keep the screen on while it reads; the page asks your phone to stay awake. Earbuds and Bluetooth speakers work as usual. Voices marked offline keep working without internet. Changing phrase size takes effect on the next Start.</p>
 </main>
@@ -159,14 +174,14 @@ if(S){S.onvoiceschanged=loadVoices;loadVoices()}else say('This browser has no sp
 function split(text,mode){
   const n={w2:2,w3:3,w5:5}[mode];
   const end=mode==='sentence'?/[.!?…]["'”’)\]]*$/:/[.!?…,;:—–]["'”’)\]]*$/;
-  const out=[];
-  text.split(/\n+/).forEach(line=>{
+  const out=[];pq=[];
+  text.split(/\n+/).forEach((line,li)=>{
     let cur=[];
     line.trim().split(/\s+/).filter(Boolean).forEach(w=>{
       cur.push(w);
-      if(end.test(w)||(n&&cur.length>=n)){out.push(cur.join(' '));cur=[]}
+      if(end.test(w)||(n&&cur.length>=n)){(out.push(cur.join(' ')),pq.push(li));cur=[]}
     });
-    if(cur.length)out.push(cur.join(' '));
+    if(cur.length)(out.push(cur.join(' ')),pq.push(li));
   });
   return out;
 }
@@ -185,6 +200,7 @@ function render(){
   const c=$('cur'),mk=document.createElement('mark');mk.textContent=phrases[idx]||'';c.replaceChildren(mk);c.classList.remove('in');void c.offsetWidth;c.classList.add('in');
   $('prog').textContent=(idx+1)+' of '+phrases.length;
   $('pause').textContent=state==='paused'?'Resume':'Pause';meta();if(ms)ms.playbackState=state==='playing'?'playing':'paused';
+  document.querySelectorAll('#qs .q').forEach(b=>b.classList.toggle('cur',+b.dataset.q===pq[idx]));const e=document.querySelector('#qs .cur');if(e)e.parentNode.scrollTop=e.offsetTop-8;
 }
 function run(i,pass){
   pass=pass||1;waiting=null;clearTimeout(timer);
@@ -226,7 +242,7 @@ function start(){
   if(!S)return;
   const text=$('t').value.trim();
   if(!text){say('Paste some text first.');return}
-  phrases=split(text,$('mode').value);
+  phrases=split(text,$('mode').value);buildList(text);
   if(!phrases.length){say('Nothing readable in that text.');return}
   say('');$('now').style.display='block';
   wake();
@@ -301,7 +317,7 @@ async function snap(files){
     const res=await fetch('/api/answer',{method:'POST',headers:{'content-type':'application/json','x-passcode':$('pass').value},body:JSON.stringify({images,style:$('style').value}),signal:ctl.signal});
     const d=await res.json().catch(()=>({}));
     if(!res.ok)throw {status:res.status,msg:d.error};
-    $('t').value=d.text.trim();
+    $('t').value=d.text.trim();saveH(d.text.trim());cnt(1);
     m.textContent='Answers ready.';
     if($('auto').checked){
       spoke=0;start();
@@ -339,6 +355,31 @@ const ACT={
 if(ms)Object.keys(ACT).forEach(a=>{try{ms.setActionHandler(a,()=>{log('earbud: '+a);if(phrases.length&&(state==='playing'||state==='paused'))ACT[a]()})}catch(e){}});
 $('ebs').textContent=ms?'This browser supports earbud controls.':'No earbud control support here. Use Chrome.';
 
+// question list, history, counter
+let pq=[],H=[];
+function buildList(text){
+  const rows=text.split(/\n+/),first={},box=$('qs');
+  pq.forEach((q,i)=>{if(!(q in first))first[q]=i});
+  box.innerHTML='';
+  rows.forEach((t,q)=>{if(!(q in first))return;const b=document.createElement('button');b.type='button';b.className='q';b.dataset.q=q;b.textContent=t;b.onclick=()=>{ka.play().catch(()=>{});run(first[q])};box.appendChild(b)});
+  $('qcard').hidden=box.children.length<2;
+}
+try{H=JSON.parse(store.get('hist','[]'))}catch(e){H=[]}
+function drawH(){
+  const b=$('hl');b.innerHTML='';
+  H.forEach(h=>{const x=document.createElement('button');x.type='button';x.className='q';x.textContent=new Date(h.t).toLocaleString([],{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})+'\n'+h.text.slice(0,70);x.onclick=()=>{$('t').value=h.text;say('Loaded from history. Press Start.')};b.appendChild(x)});
+}
+function saveH(text){H.unshift({t:Date.now(),text});H=H.slice(0,20);store.set('hist',JSON.stringify(H));drawH()}
+$('hclr').onclick=()=>{H=[];store.set('hist','[]');drawH()};
+function cnt(add){
+  const d=new Date().toDateString();let c;
+  try{c=JSON.parse(store.get('cnt','{}'))}catch(e){c={}}
+  if(c.d!==d)c={d,n:0};
+  if(add){c.n++;store.set('cnt',JSON.stringify(c))}
+  $('cnt').textContent='Photos answered today on this phone: '+c.n;
+}
+drawH();cnt(0);
+
 $('clr').onclick=()=>{$('t').value='';say('');$('t').focus()};
 $('pg').onclick=async()=>{
   prime();
@@ -357,7 +398,7 @@ $('pause').onclick=()=>{
 $('back').onclick=()=>{if(phrases.length)run(idx-1)};
 $('rep').onclick=()=>{if(phrases.length)run(idx)};
 $('next').onclick=()=>{if(phrases.length)run(idx+1)};
-$('stop').onclick=()=>{state='idle';waiting=null;session++;clearTimeout(timer);S&&S.cancel();unwake();$('now').style.display='none';ka.pause();if(ms)ms.playbackState='none'};
+$('stop').onclick=()=>{state='idle';waiting=null;session++;clearTimeout(timer);S&&S.cancel();unwake();$('now').style.display='none';$('qcard').hidden=true;ka.pause();if(ms)ms.playbackState='none'};
 </script>
 </body>
 </html>
