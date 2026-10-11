@@ -4,7 +4,9 @@ import { timingSafeEqual } from "crypto";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const MODELS = [process.env.GEMINI_MODEL, "gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite"].filter(
+  (m, i, a): m is string => !!m && a.indexOf(m) === i
+);
 
 const prompt = (style: string) => `The attached images are photos of a page of questions, in order. Answer every question you can read.
 Your answer will be read aloud by a text-to-speech voice and written down by hand, so:
@@ -40,22 +42,24 @@ export async function POST(req: NextRequest) {
     parts.push({ inline_data: { mime_type: m[1], data: img.slice(m[0].length) } });
   }
 
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
-    {
+  let status = 502, msg = "";
+  for (const model of MODELS) {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.2 } }),
+    });
+    if (r.ok) {
+      const d = await r.json();
+      const text = (d.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text || "").join("").trim();
+      if (text) return NextResponse.json({ text, model });
+      status = 502; msg = "No answer came back. Try a clearer photo.";
+      continue;
     }
-  );
-  if (!r.ok) {
-    return r.status === 429
-      ? fail("Free limit reached. Try again in a minute.", 429)
-      : fail("The AI service had a problem. Try again.", 502);
+    const e = await r.json().catch(() => null);
+    status = r.status; msg = e?.error?.message || r.statusText;
+    console.error("Gemini error", model, status, msg);
+    if (status === 400 || status === 401 || status === 403) break;
   }
-
-  const d = await r.json();
-  const text = (d.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text || "").join("").trim();
-  if (!text) return fail("No answer came back. Try a clearer photo.", 502);
-  return NextResponse.json({ text });
+  return fail(`Gemini said (${status}): ${msg}`.slice(0, 300), status === 429 ? 429 : 502);
 }

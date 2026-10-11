@@ -59,12 +59,22 @@ input[type=file]{width:100%;margin-top:4px;color:var(--mute)}
 summary{font-weight:800;cursor:pointer;min-height:44px;display:flex;align-items:center}
 #ebl{margin:8px 0 0;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;color:var(--mute)}
 #msg{color:var(--acc);min-height:1.4em;margin-top:8px;font-weight:700}
+[hidden]{display:none!important}
+html,body{max-width:100%;overflow-x:hidden}
+.card,.row>button{min-width:0}
+label,.note,summary,.ck{overflow-wrap:anywhere}
+#cam{width:100%;min-height:76px;font-size:1.25rem}
+button.link{width:100%;min-height:44px;margin-top:6px;background:none;border:0;box-shadow:none;color:inherit;text-decoration:underline;font-weight:600}
+#shot{display:flex;gap:14px;align-items:center;margin-top:16px}
+#thumb{width:88px;height:88px;object-fit:cover;border-radius:18px;border:1px solid rgba(255,255,255,.4);flex:none}
+#snapmsg{font-weight:700}
+#retry,#sx{min-height:44px;margin-top:10px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
 <main>
-<header><h1>Slow Reader</h1><p class="sub">Snap a photo or paste text. It reads in short phrases, then waits while you write.</p></header>
+<header><h1>Slow Reader</h1><p class="sub">Snap the questions. It reads the answers slowly so you can write them down.</p></header>
 
 <section class="card" id="now" aria-live="polite">
   <div id="cur"></div>
@@ -77,31 +87,26 @@ summary{font-weight:800;cursor:pointer;min-height:44px;display:flex;align-items:
 <section class="card" id="qcard" hidden><h2>Questions</h2><p class="note">Tap one to read it. Reading carries on from there.</p><div id="qs"></div></section>
 
 <section class="card hero" id="snapcard">
-  <h2>Snap the questions</h2>
-  <div class="row"><button id="cam" class="p">Take photo</button><button id="gal">Choose photo</button></div>
-  <label for="style">Answers</label>
-  <select id="style"><option value="short">Short answers only</option><option value="work">Answer plus brief working</option></select>
-  <label class="ck"><input type="checkbox" id="auto">Start reading when answers are ready</label>
-  <label for="pass">Passcode</label>
-  <input type="password" id="pass" autocomplete="off">
-  <div id="snapmsg" class="note" aria-live="polite"></div>
-  <div class="row"><button id="sx" hidden>Stop</button></div>
-  <p class="note">Answers are written by an AI model. Check them before relying on them.</p>
+  <h2>Photo of the questions</h2>
+  <button id="cam" class="p">Take photo</button>
+  <button id="gal" class="link">or choose from gallery</button>
+  <div id="shot" hidden><img id="thumb" alt="Your photo"><div><div id="snapmsg" aria-live="polite"></div><button id="retry" hidden>Try again</button><button id="sx" hidden>Stop</button></div></div>
+  <div id="passrow" hidden><label for="pass">Passcode</label><input type="password" id="pass" autocomplete="off"></div>
   <p class="note" id="cnt"></p>
   <input type="file" id="fcam" accept="image/*" capture="environment" hidden>
   <input type="file" id="fgal" accept="image/*" multiple hidden>
 </section>
 
 <section class="card">
-  <textarea id="t" placeholder="Paste or type the text to read…" aria-label="Text to read"></textarea>
-  <div class="row"><button id="start" class="p">Start</button><button id="pg">Paste + start</button><button id="clr">Clear</button></div>
-  <label for="file">Or load a file (.txt, .docx, .pdf)</label>
-  <input type="file" id="file" accept=".txt,.md,.docx,.pdf,text/plain,application/pdf">
+  <h2>Text to read</h2>
+  <textarea id="t" placeholder="Answers appear here. You can also paste any text." aria-label="Text to read"></textarea>
+  <div class="row"><button id="start" class="p">Start reading</button><button id="clr">Clear</button></div>
+  <button id="pg" class="link">Paste from clipboard and start</button>
   <div id="msg"></div>
 </section>
 
-<section class="card">
-  <label style="margin-top:0">Presets</label>
+<details class="card"><summary>Settings</summary>
+  <label>Presets</label>
   <div class="row3"><button id="pn">Notes</button><button id="pc">Careful</button><button id="pr">Normal</button></div>
   <label for="rate">Speed <span id="rv"></span></label>
   <input type="range" id="rate" min="0.1" max="1.2" step="0.05">
@@ -110,13 +115,7 @@ summary{font-weight:800;cursor:pointer;min-height:44px;display:flex;align-items:
   <label for="pw">Extra writing time per word <span id="pv"></span></label>
   <input type="range" id="pw" min="0" max="2" step="0.25">
   <label for="mode">Phrase size</label>
-  <select id="mode">
-    <option value="sentence">Whole sentence</option>
-    <option value="clause">Up to each comma</option>
-    <option value="w5">5 words at a time</option>
-    <option value="w3">3 words at a time</option>
-    <option value="w2">2 words at a time</option>
-  </select>
+  <select id="mode"><option value="sentence">Whole sentence</option><option value="clause">Up to each comma</option><option value="w5">5 words at a time</option><option value="w3">3 words at a time</option><option value="w2">2 words at a time</option></select>
   <label for="adv">After each phrase</label>
   <select id="adv"><option value="timer">Wait for the pause timer</option><option value="tap">Wait until I tap</option></select>
   <label class="ck"><input type="checkbox" id="twice">Read each phrase twice</label>
@@ -125,14 +124,19 @@ summary{font-weight:800;cursor:pointer;min-height:44px;display:flex;align-items:
   <select id="lead"><option value="0">None</option><option value="3">3 seconds</option><option value="5">5 seconds</option></select>
   <label for="voice">Voice</label>
   <select id="voice"><option value="">Phone default</option></select>
-</section>
+  <label for="style">Answers</label>
+  <select id="style"><option value="short">Short answers only</option><option value="work">Answer plus brief working</option></select>
+  <label class="ck"><input type="checkbox" id="auto">Start reading when answers are ready</label>
+  <label for="file">Load a file (.txt, .docx, .pdf)</label>
+  <input type="file" id="file" accept=".txt,.md,.docx,.pdf,text/plain,application/pdf">
+</details>
 
-<details class="card"><summary>Earbud controls</summary>
-<p class="note">Tap once to pause or resume. Next skips to the next phrase. Previous repeats the phrase; press it twice quickly to go back one. Commands from your earbuds show below.</p>
-<div class="note" id="ebs"></div><pre id="ebl"></pre></details>
 <details class="card" id="hist"><summary>History</summary><div id="hl"></div><div class="row"><button id="hclr">Clear history</button></div></details>
 
-<p class="note">Keep the screen on while it reads; the page asks your phone to stay awake. Earbuds and Bluetooth speakers work as usual. Voices marked offline keep working without internet. Changing phrase size takes effect on the next Start.</p>
+<details class="card"><summary>Earbud log</summary>
+  <p class="note">Tap once to pause or resume, or to start reading. Next skips a phrase. Previous repeats it; press twice to go back one.</p>
+  <div class="note" id="ebs"></div><pre id="ebl"></pre>
+</details>
 </main>
 
 <script>
@@ -293,7 +297,7 @@ $('file').addEventListener('change',async ev=>{
 // snap questions
 let spoke=0,ctl=null;
 const ERR={401:'Wrong passcode.',413:'Photo too large. Try fewer or smaller photos.',429:'Free limit reached. Try again in a minute.'};
-$('style').value=store.get('style','short');$('auto').checked=store.get('auto','1')==='1';$('pass').value=store.get('pass','');
+$('style').value=store.get('style','short');$('auto').checked=store.get('auto','1')==='1';$('pass').value=store.get('pass','');$('passrow').hidden=!!$('pass').value;
 $('style').addEventListener('input',()=>store.set('style',$('style').value));
 $('auto').addEventListener('change',()=>store.set('auto',$('auto').checked?'1':'0'));
 $('pass').addEventListener('input',()=>store.set('pass',$('pass').value));
@@ -307,27 +311,37 @@ async function shrink(f){
     return await new Promise(r=>c.toBlob(x=>r(x||f),'image/jpeg',.8));
   }catch(e){return f}
 }
-async function snap(files){
+let lastFiles=[];
+async function snap(files,again){
   if(!files.length)return;
+  lastFiles=files;
   const m=$('snapmsg');
-  if(!$('pass').value){m.textContent='Enter your passcode first.';return}
-  ctl=new AbortController();$('sx').hidden=false;wake();m.textContent='Reading the photo and writing answers…';
+  $('shot').hidden=false;$('retry').hidden=true;
+  if(!again)$('thumb').src=URL.createObjectURL(files[0]);
+  if(!$('pass').value){$('passrow').hidden=false;m.textContent='Enter your passcode below, then tap Try again.';$('retry').hidden=false;return}
+  ctl=new AbortController();$('sx').hidden=false;wake();m.textContent='Photo received. Asking Gemini, this takes 10 to 30 seconds…';
   try{
     const images=await Promise.all(files.slice(0,3).map(async f=>toURL(await shrink(f))));
     const res=await fetch('/api/answer',{method:'POST',headers:{'content-type':'application/json','x-passcode':$('pass').value},body:JSON.stringify({images,style:$('style').value}),signal:ctl.signal});
     const d=await res.json().catch(()=>({}));
     if(!res.ok)throw {status:res.status,msg:d.error};
     $('t').value=d.text.trim();saveH(d.text.trim());cnt(1);
-    m.textContent='Answers ready.';
+    m.textContent='Answers ready. They are in the text box below.';
     if($('auto').checked){
       spoke=0;start();
       setTimeout(()=>{if(!spoke&&state!=='idle')$('prog').textContent='No sound? Tap Pause, then Resume.'},3000+(+$('lead').value)*1000);
-    }else unwake();
+    }else{
+      unwake();ka.play().catch(()=>{});
+      if(ms&&window.MediaMetadata){ms.metadata=new MediaMetadata({title:'Answers ready',artist:'Press play to start reading'});ms.playbackState='paused'}
+    }
   }catch(e){
     unwake();
-    m.textContent=e&&e.name==='AbortError'?'Stopped.':(e&&(ERR[e.status]||e.msg))||'Something went wrong. Check your connection and try again.';
+    if(e&&e.status===401)$('passrow').hidden=false;
+    m.textContent=e&&e.name==='AbortError'?'Stopped.':(e&&(e.msg||ERR[e.status]))||'Something went wrong. Check your connection.';
+    $('retry').hidden=false;
   }finally{$('sx').hidden=true}
 }
+$('retry').onclick=()=>snap(lastFiles,true);
 $('cam').onclick=()=>{prime();$('fcam').click()};
 $('gal').onclick=()=>{prime();$('fgal').click()};
 ['fcam','fgal'].forEach(id=>$(id).addEventListener('change',ev=>{const f=[...ev.target.files];ev.target.value='';snap(f)}));
@@ -352,7 +366,7 @@ const ACT={
   nexttrack:()=>run(idx+1),seekforward:()=>run(idx+1),seekbackward:()=>run(idx-1),
   previoustrack:()=>{const t=Date.now();run(t-lastPrev<1500?idx-1:idx);lastPrev=t}
 };
-if(ms)Object.keys(ACT).forEach(a=>{try{ms.setActionHandler(a,()=>{log('earbud: '+a);if(phrases.length&&(state==='playing'||state==='paused'))ACT[a]()})}catch(e){}});
+if(ms)Object.keys(ACT).forEach(a=>{try{ms.setActionHandler(a,()=>{log('earbud: '+a);if(a==='play'&&state==='idle'&&$('t').value.trim()){start();return}if(phrases.length&&(state==='playing'||state==='paused'))ACT[a]()})}catch(e){}});
 $('ebs').textContent=ms?'This browser supports earbud controls.':'No earbud control support here. Use Chrome.';
 
 // question list, history, counter
