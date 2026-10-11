@@ -45,6 +45,8 @@ select,input[type=password]{display:block;width:100%;min-height:50px;border:2px 
 input[type=checkbox]{width:22px;height:22px;margin:0 12px 0 0;accent-color:var(--acc)}
 input[type=file]{width:100%;margin-top:4px;color:var(--mute)}
 .note{color:var(--mute);font-size:.88rem}
+summary{font-weight:700;cursor:pointer;min-height:44px;display:flex;align-items:center}
+#ebl{margin:8px 0 0;font:12px/1.4 ui-monospace,monospace;white-space:pre-wrap;color:var(--mute)}
 #msg{color:var(--red);min-height:1.4em;margin-top:8px;font-weight:700}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -110,6 +112,10 @@ input[type=file]{width:100%;margin-top:4px;color:var(--mute)}
   <label for="voice">Voice</label>
   <select id="voice"><option value="">Phone default</option></select>
 </section>
+
+<details class="card"><summary>Earbud controls</summary>
+<p class="note">Tap once to pause or resume. Next skips to the next phrase. Previous repeats the phrase; press it twice quickly to go back one. Commands from your earbuds show below.</p>
+<div class="note" id="ebs"></div><pre id="ebl"></pre></details>
 
 <p class="note">Keep the screen on while it reads; the page asks your phone to stay awake. Earbuds and Bluetooth speakers work as usual. Voices marked offline keep working without internet. Changing phrase size takes effect on the next Start.</p>
 </main>
@@ -178,7 +184,7 @@ function bar(sec){
 function render(){
   const c=$('cur'),mk=document.createElement('mark');mk.textContent=phrases[idx]||'';c.replaceChildren(mk);c.classList.remove('in');void c.offsetWidth;c.classList.add('in');
   $('prog').textContent=(idx+1)+' of '+phrases.length;
-  $('pause').textContent=state==='paused'?'Resume':'Pause';
+  $('pause').textContent=state==='paused'?'Resume':'Pause';meta();if(ms)ms.playbackState=state==='playing'?'playing':'paused';
 }
 function run(i,pass){
   pass=pass||1;waiting=null;clearTimeout(timer);
@@ -194,7 +200,7 @@ function run(i,pass){
   u.rate=+$('rate').value;
   const v=voices.find(x=>x.voiceURI===$('voice').value);
   if(v){u.voice=v;u.lang=v.lang}
-  u.onstart=()=>{spoke=1};
+  u.onstart=()=>{spoke=1;log('read '+(idx+1))};
   u.onend=()=>{
     if(my!==session||state!=='playing')return;
     const twice=$('twice').checked, again=twice&&pass===1;
@@ -213,7 +219,7 @@ function run(i,pass){
 }
 function finish(){
   state='idle';session++;clearTimeout(timer);unwake();
-  $('cur').textContent='Finished.';$('prog').textContent=phrases.length+' phrases read';
+  ka.pause();if(ms)ms.playbackState='none';$('cur').textContent='Finished.';$('prog').textContent=phrases.length+' phrases read';
   $('gap').style.width='0';$('pause').textContent='Pause';
 }
 function start(){
@@ -224,7 +230,7 @@ function start(){
   if(!phrases.length){say('Nothing readable in that text.');return}
   say('');$('now').style.display='block';
   wake();
-  $('now').scrollIntoView({block:'start'});
+  ka.play().catch(()=>{});$('now').scrollIntoView({block:'start'});
   let c=+$('lead').value;
   if(c>0){
     prime();state='counting';clearTimeout(timer);
@@ -311,6 +317,28 @@ $('gal').onclick=()=>{prime();$('fgal').click()};
 ['fcam','fgal'].forEach(id=>$(id).addEventListener('change',ev=>{const f=[...ev.target.files];ev.target.value='';snap(f)}));
 $('sx').onclick=()=>{if(ctl)ctl.abort()};
 
+// earbud controls and keep-alive
+const L=[];
+function log(t){L.unshift(new Date().toLocaleTimeString()+' '+t);L.length=Math.min(L.length,40);const e=$('ebl');if(e)e.textContent=L.join('\n')}
+const ka=new Audio();ka.loop=true;
+(()=>{const sr=8000,n=sr,b=new DataView(new ArrayBuffer(44+n*2)),w=(o,t)=>[...t].forEach((c,i)=>b.setUint8(o+i,c.charCodeAt(0)));
+w(0,'RIFF');b.setUint32(4,36+n*2,true);w(8,'WAVEfmt ');b.setUint32(16,16,true);b.setUint16(20,1,true);b.setUint16(22,1,true);b.setUint32(24,sr,true);b.setUint32(28,sr*2,true);b.setUint16(32,2,true);b.setUint16(34,16,true);w(36,'data');b.setUint32(40,n*2,true);
+for(let i=0;i<n;i++)b.setInt16(44+i*2,Math.round(40*Math.sin(2*Math.PI*25*i/sr)),true);
+ka.src=URL.createObjectURL(new Blob([b],{type:'audio/wav'}))})();
+ka.addEventListener('playing',()=>log('keep-alive on'));
+ka.addEventListener('pause',()=>{if(state==='playing'||state==='paused'){log('keep-alive stopped by phone, restarting');ka.play().catch(()=>{})}});
+document.addEventListener('visibilitychange',()=>log('screen '+document.visibilityState));
+const ms=navigator.mediaSession;
+function meta(){if(ms&&window.MediaMetadata)ms.metadata=new MediaMetadata({title:phrases[idx]||'Slow Reader',artist:'Slow Reader',album:(idx+1)+' of '+phrases.length})}
+let lastPrev=0;
+const ACT={
+  play:()=>$('pause').click(),pause:()=>$('pause').click(),
+  nexttrack:()=>run(idx+1),seekforward:()=>run(idx+1),seekbackward:()=>run(idx-1),
+  previoustrack:()=>{const t=Date.now();run(t-lastPrev<1500?idx-1:idx);lastPrev=t}
+};
+if(ms)Object.keys(ACT).forEach(a=>{try{ms.setActionHandler(a,()=>{log('earbud: '+a);if(phrases.length&&(state==='playing'||state==='paused'))ACT[a]()})}catch(e){}});
+$('ebs').textContent=ms?'This browser supports earbud controls.':'No earbud control support here. Use Chrome.';
+
 $('clr').onclick=()=>{$('t').value='';say('');$('t').focus()};
 $('pg').onclick=async()=>{
   prime();
@@ -329,7 +357,7 @@ $('pause').onclick=()=>{
 $('back').onclick=()=>{if(phrases.length)run(idx-1)};
 $('rep').onclick=()=>{if(phrases.length)run(idx)};
 $('next').onclick=()=>{if(phrases.length)run(idx+1)};
-$('stop').onclick=()=>{state='idle';waiting=null;session++;clearTimeout(timer);S&&S.cancel();unwake();$('now').style.display='none'};
+$('stop').onclick=()=>{state='idle';waiting=null;session++;clearTimeout(timer);S&&S.cancel();unwake();$('now').style.display='none';ka.pause();if(ms)ms.playbackState='none'};
 </script>
 </body>
 </html>
