@@ -7,6 +7,6 @@
 
 - `GEMINI_API_KEY`: your key from Google AI Studio.
 - `READER_PASSCODE`: any passcode you choose. Type it into the page once.
-- `GEMINI_MODEL`: optional, defaults to `gemini-2.5-flash`.
+- `GEMINI_MODEL`: optional. Leave empty to let the app pick the newest Flash model your key can use.
 
 Never commit `.env.local`.

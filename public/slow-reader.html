@@ -65,10 +65,21 @@ html,body{max-width:100%;overflow-x:hidden}
 label,.note,summary,.ck{overflow-wrap:anywhere}
 #cam{width:100%;min-height:76px;font-size:1.25rem}
 button.link{width:100%;min-height:44px;margin-top:6px;background:none;border:0;box-shadow:none;color:inherit;text-decoration:underline;font-weight:600}
-#shot{display:flex;gap:14px;align-items:center;margin-top:16px}
-#thumb{width:88px;height:88px;object-fit:cover;border-radius:18px;border:1px solid rgba(255,255,255,.4);flex:none}
+#shot{margin-top:16px}
+#shothead{display:flex;gap:12px;align-items:center}
+#snaphelp{margin:10px 0 0}
+#snapdbg{white-space:pre-wrap;font-size:12px}
+#thumb{width:64px;height:64px;object-fit:cover;border-radius:18px;border:1px solid rgba(255,255,255,.4);flex:none}
 #snapmsg{font-weight:700}
-#retry,#sx{min-height:44px;margin-top:10px}
+#retry,#sx{display:block;width:100%;min-height:52px;margin-top:12px}
+.reading header,.reading #snapcard,.reading #textcard,.reading details.card{display:none}
+body.wm{overflow:hidden}
+#wm{display:none;position:fixed;inset:0;z-index:50;flex-direction:column;justify-content:center;gap:18px;padding:max(24px,env(safe-area-inset-top)) 20px max(24px,env(safe-area-inset-bottom));color:#2a1604;background:linear-gradient(200deg,rgba(255,255,255,.5),transparent 45%),var(--o)}
+.wm #wm{display:flex}
+#wlabel{font-weight:800;text-align:center;opacity:.7}
+#wphrase{font:700 clamp(2rem,9vw,3rem)/1.15 Manrope,system-ui,sans-serif;text-align:center;min-height:5em;display:flex;align-items:center;justify-content:center;overflow-wrap:anywhere}
+#wcount{font:800 clamp(5rem,28vw,9rem)/1 Manrope,system-ui,sans-serif;text-align:center;font-variant-numeric:tabular-nums;min-height:1em}
+#wm .row{margin-top:0}#wm .row button{min-height:68px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -82,6 +93,7 @@ button.link{width:100%;min-height:44px;margin-top:6px;background:none;border:0;b
   <div id="prog"></div>
   <div class="row3"><button id="back">Back</button><button id="rep">Repeat</button><button id="next">Next</button></div>
   <div class="row2"><button id="pause" class="p">Pause</button><button id="stop">Stop</button></div>
+  <button id="wbtn" class="link">Write mode</button>
 </section>
 
 <section class="card" id="qcard" hidden><h2>Questions</h2><p class="note">Tap one to read it. Reading carries on from there.</p><div id="qs"></div></section>
@@ -89,17 +101,26 @@ button.link{width:100%;min-height:44px;margin-top:6px;background:none;border:0;b
 <section class="card hero" id="snapcard">
   <h2>Photo of the questions</h2>
   <button id="cam" class="p">Take photo</button>
+  <label for="style">Answer mode</label>
+  <select id="style"><option value="quick">Quick answer</option><option value="learn">Learn: method and example</option></select>
   <button id="gal" class="link">or choose from gallery</button>
-  <div id="shot" hidden><img id="thumb" alt="Your photo"><div><div id="snapmsg" aria-live="polite"></div><button id="retry" hidden>Try again</button><button id="sx" hidden>Stop</button></div></div>
+  <div id="shot" hidden>
+    <div id="shothead"><img id="thumb" alt="Your photo"><strong id="snapmsg" aria-live="polite"></strong></div>
+    <p id="snaphelp" class="note"></p>
+    <details id="snapdet" hidden><summary>Technical details</summary><pre id="snapdbg"></pre></details>
+    <button id="retry" hidden>Try again</button>
+    <button id="sx" hidden>Stop</button>
+  </div>
   <div id="passrow" hidden><label for="pass">Passcode</label><input type="password" id="pass" autocomplete="off"></div>
   <p class="note" id="cnt"></p>
   <input type="file" id="fcam" accept="image/*" capture="environment" hidden>
   <input type="file" id="fgal" accept="image/*" multiple hidden>
 </section>
 
-<section class="card">
+<section class="card" id="textcard">
   <h2>Text to read</h2>
   <textarea id="t" placeholder="Answers appear here. You can also paste any text." aria-label="Text to read"></textarea>
+  <button id="resume" class="link" hidden></button>
   <div class="row"><button id="start" class="p">Start reading</button><button id="clr">Clear</button></div>
   <button id="pg" class="link">Paste from clipboard and start</button>
   <div id="msg"></div>
@@ -124,8 +145,6 @@ button.link{width:100%;min-height:44px;margin-top:6px;background:none;border:0;b
   <select id="lead"><option value="0">None</option><option value="3">3 seconds</option><option value="5">5 seconds</option></select>
   <label for="voice">Voice</label>
   <select id="voice"><option value="">Phone default</option></select>
-  <label for="style">Answers</label>
-  <select id="style"><option value="short">Short answers only</option><option value="work">Answer plus brief working</option></select>
   <label class="ck"><input type="checkbox" id="auto">Start reading when answers are ready</label>
   <label for="file">Load a file (.txt, .docx, .pdf)</label>
   <input type="file" id="file" accept=".txt,.md,.docx,.pdf,text/plain,application/pdf">
@@ -138,6 +157,10 @@ button.link{width:100%;min-height:44px;margin-top:6px;background:none;border:0;b
   <div class="note" id="ebs"></div><pre id="ebl"></pre>
 </details>
 </main>
+
+<div id="wm"><div id="wlabel">Listen</div><div id="wphrase"></div><div id="wcount"></div>
+  <div class="row"><button id="wrep" class="p">Repeat</button><button id="wpause">Pause</button></div>
+  <button id="wexit" class="link">Exit write mode</button></div>
 
 <script>
 const $=id=>document.getElementById(id), S=window.speechSynthesis;
@@ -203,11 +226,12 @@ function bar(sec){
 function render(){
   const c=$('cur'),mk=document.createElement('mark');mk.textContent=phrases[idx]||'';c.replaceChildren(mk);c.classList.remove('in');void c.offsetWidth;c.classList.add('in');
   $('prog').textContent=(idx+1)+' of '+phrases.length;
-  $('pause').textContent=state==='paused'?'Resume':'Pause';meta();if(ms)ms.playbackState=state==='playing'?'playing':'paused';
+  $('pause').textContent=state==='paused'?'Resume':'Pause';$('wphrase').textContent=phrases[idx]||'';$('wpause').textContent=$('pause').textContent;store.set('sidx',String(idx));
+  meta();if(ms)ms.playbackState=state==='playing'?'playing':'paused';
   document.querySelectorAll('#qs .q').forEach(b=>b.classList.toggle('cur',+b.dataset.q===pq[idx]));const e=document.querySelector('#qs .cur');if(e)e.parentNode.scrollTop=e.offsetTop-8;
 }
 function run(i,pass){
-  pass=pass||1;waiting=null;clearTimeout(timer);
+  pass=pass||1;waiting=null;clearTimeout(timer);clearInterval(wtick);$('wlabel').textContent='Listen';$('wcount').textContent='';
   if(i<0)i=0;
   if(i>=phrases.length){finish();return}
   idx=i;state='playing';
@@ -227,8 +251,8 @@ function run(i,pass){
     let g=+$('gapS').value+phrases[idx].split(/\s+/).length*(+$('pw').value);
     if(twice&&pass===2)g=Math.max(1,g/2);
     const go=()=>run(again?idx:idx+1,again?2:1);
-    if($('adv').value==='tap'){waiting=go;$('prog').textContent=(idx+1)+' of '+phrases.length+'. Tap anywhere to continue.';return}
-    bar(g);
+    if($('adv').value==='tap'){waiting=go;$('wlabel').textContent='Tap to continue';$('wcount').textContent='';$('prog').textContent=(idx+1)+' of '+phrases.length+'. Tap anywhere to continue.';return}
+    bar(g);wcd(g);
     timer=setTimeout(go,g*1000);
   };
   u.onerror=e=>{
@@ -240,24 +264,24 @@ function run(i,pass){
 function finish(){
   state='idle';session++;clearTimeout(timer);unwake();
   ka.pause();if(ms)ms.playbackState='none';$('cur').textContent='Finished.';$('prog').textContent=phrases.length+' phrases read';
-  $('gap').style.width='0';$('pause').textContent='Pause';
+  $('gap').style.width='0';$('pause').textContent='Read again';store.set('stext','');showResume();$('wphrase').textContent='Finished.';$('wcount').textContent='';$('wlabel').textContent='Done';
 }
-function start(){
-  if(!S)return;
+function start(from){
+  if(!S)return;from=typeof from==='number'?from:0;S.cancel();clearTimeout(timer);clearInterval(wtick);waiting=null;session++;state='idle';idx=0;
   const text=$('t').value.trim();
   if(!text){say('Paste some text first.');return}
-  phrases=split(text,$('mode').value);buildList(text);
+  phrases=split(text,$('mode').value);buildList(text);store.set('stext',text);
   if(!phrases.length){say('Nothing readable in that text.');return}
-  say('');$('now').style.display='block';
+  say('');$('now').style.display='block';document.body.classList.add('reading');
   wake();
   ka.play().catch(()=>{});$('now').scrollIntoView({block:'start'});
   let c=+$('lead').value;
   if(c>0){
     prime();state='counting';clearTimeout(timer);
     const my=++session;$('prog').textContent='';
-    const tick=()=>{if(my!==session)return;if(c<=0){run(0);return}$('cur').textContent='Starting in '+c+'…';c--;timer=setTimeout(tick,1000)};
+    const tick=()=>{if(my!==session)return;if(c<=0){run(from);return}$('cur').textContent='Starting in '+c+'…';c--;timer=setTimeout(tick,1000)};
     tick();
-  }else run(0);
+  }else run(from);
 }
 function prime(){try{const p=new SpeechSynthesisUtterance(' ');p.volume=0;S.speak(p)}catch(e){}}
 
@@ -297,7 +321,7 @@ $('file').addEventListener('change',async ev=>{
 // snap questions
 let spoke=0,ctl=null;
 const ERR={401:'Wrong passcode.',413:'Photo too large. Try fewer or smaller photos.',429:'Free limit reached. Try again in a minute.'};
-$('style').value=store.get('style','short');$('auto').checked=store.get('auto','1')==='1';$('pass').value=store.get('pass','');$('passrow').hidden=!!$('pass').value;
+$('style').value=store.get('style','quick');$('auto').checked=store.get('auto','1')==='1';$('pass').value=store.get('pass','');$('passrow').hidden=!!$('pass').value;
 $('style').addEventListener('input',()=>store.set('style',$('style').value));
 $('auto').addEventListener('change',()=>store.set('auto',$('auto').checked?'1':'0'));
 $('pass').addEventListener('input',()=>store.set('pass',$('pass').value));
@@ -311,22 +335,23 @@ async function shrink(f){
     return await new Promise(r=>c.toBlob(x=>r(x||f),'image/jpeg',.8));
   }catch(e){return f}
 }
-let lastFiles=[];
+let lastFiles=[],busy=false;
+function snapUI(t,h,d){$('snapmsg').textContent=t;$('snaphelp').textContent=h||'';$('snapdet').hidden=!d;$('snapdbg').textContent=d||''}
 async function snap(files,again){
-  if(!files.length)return;
+  if(!files.length||busy)return;
   lastFiles=files;
-  const m=$('snapmsg');
   $('shot').hidden=false;$('retry').hidden=true;
   if(!again)$('thumb').src=URL.createObjectURL(files[0]);
-  if(!$('pass').value){$('passrow').hidden=false;m.textContent='Enter your passcode below, then tap Try again.';$('retry').hidden=false;return}
-  ctl=new AbortController();$('sx').hidden=false;wake();m.textContent='Photo received. Asking Gemini, this takes 10 to 30 seconds…';
+  if(!$('pass').value){$('passrow').hidden=false;snapUI('Passcode needed','Enter it below, then tap Try again.');$('retry').hidden=false;return}
+  busy=true;ctl=new AbortController();$('sx').hidden=false;wake();
+  snapUI('Reading your photo…','Photo received. This takes 10 to 30 seconds.');
   try{
     const images=await Promise.all(files.slice(0,3).map(async f=>toURL(await shrink(f))));
     const res=await fetch('/api/answer',{method:'POST',headers:{'content-type':'application/json','x-passcode':$('pass').value},body:JSON.stringify({images,style:$('style').value}),signal:ctl.signal});
     const d=await res.json().catch(()=>({}));
-    if(!res.ok)throw {status:res.status,msg:d.error};
+    if(!res.ok)throw {status:res.status,msg:d.error,det:d.detail};
     $('t').value=d.text.trim();saveH(d.text.trim());cnt(1);
-    m.textContent='Answers ready. They are in the text box below.';
+    snapUI('Answers ready','They are in the text box below.');
     if($('auto').checked){
       spoke=0;start();
       setTimeout(()=>{if(!spoke&&state!=='idle')$('prog').textContent='No sound? Tap Pause, then Resume.'},3000+(+$('lead').value)*1000);
@@ -337,9 +362,10 @@ async function snap(files,again){
   }catch(e){
     unwake();
     if(e&&e.status===401)$('passrow').hidden=false;
-    m.textContent=e&&e.name==='AbortError'?'Stopped.':(e&&(e.msg||ERR[e.status]))||'Something went wrong. Check your connection.';
+    if(e&&e.name==='AbortError')snapUI('Stopped','');
+    else snapUI(e&&e.status===401?'Wrong passcode':"Couldn't get answers",(e&&e.msg)||'Check your connection and try again.',e&&e.det);
     $('retry').hidden=false;
-  }finally{$('sx').hidden=true}
+  }finally{busy=false;$('sx').hidden=true}
 }
 $('retry').onclick=()=>snap(lastFiles,true);
 $('cam').onclick=()=>{prime();$('fcam').click()};
@@ -394,6 +420,16 @@ function cnt(add){
 }
 drawH();cnt(0);
 
+// write mode and resume
+let wtick=null,endAt=0;
+function wcd(g){clearInterval(wtick);endAt=Date.now()+g*1000;const f=()=>{$('wcount').textContent=Math.max(0,Math.ceil((endAt-Date.now())/1000))};$('wlabel').textContent='Write';f();wtick=setInterval(f,250)}
+$('wbtn').onclick=()=>document.body.classList.add('wm');
+$('wexit').onclick=()=>document.body.classList.remove('wm');
+$('wrep').onclick=()=>$('rep').click();
+$('wpause').onclick=()=>$('pause').click();
+function showResume(){const t=store.get('stext',''),i=+store.get('sidx','0');$('resume').hidden=!(t&&i>0);if(t&&i>0)$('resume').textContent='Resume from phrase '+(i+1)}
+$('resume').onclick=()=>{$('t').value=store.get('stext','');start(+store.get('sidx','0'))};
+showResume();
 $('clr').onclick=()=>{$('t').value='';say('');$('t').focus()};
 $('pg').onclick=async()=>{
   prime();
@@ -406,13 +442,14 @@ $('pg').onclick=async()=>{
   start();
 };
 $('pause').onclick=()=>{
-  if(state==='playing'){state='paused';waiting=null;session++;clearTimeout(timer);S.cancel();render()}
+  if(state==='playing'){state='paused';waiting=null;session++;clearTimeout(timer);clearInterval(wtick);S.cancel();render()}
   else if(state==='paused'){run(idx)}
+  else if(state==='idle'&&phrases.length){start()}
 };
 $('back').onclick=()=>{if(phrases.length)run(idx-1)};
 $('rep').onclick=()=>{if(phrases.length)run(idx)};
 $('next').onclick=()=>{if(phrases.length)run(idx+1)};
-$('stop').onclick=()=>{state='idle';waiting=null;session++;clearTimeout(timer);S&&S.cancel();unwake();$('now').style.display='none';$('qcard').hidden=true;ka.pause();if(ms)ms.playbackState='none'};
+$('stop').onclick=()=>{state='idle';waiting=null;session++;clearTimeout(timer);S&&S.cancel();unwake();$('now').style.display='none';$('qcard').hidden=true;document.body.classList.remove('reading','wm');clearInterval(wtick);showResume();ka.pause();if(ms)ms.playbackState='none'};
 </script>
 </body>
 </html>
