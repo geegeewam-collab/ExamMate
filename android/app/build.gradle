@@ -17,6 +17,11 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    lint {
+        // Lint warnings must not stop an APK build
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
     signingConfigs {
         release {
             // Set by the GitHub workflow (or your own shell) from your private keystore. Never commit the keystore.

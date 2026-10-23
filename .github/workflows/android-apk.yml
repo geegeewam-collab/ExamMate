@@ -44,7 +44,19 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - uses: android-actions/setup-android@v3
+      # GitHub's ubuntu runners already include the Android SDK, so the old "android-actions/setup-android"
+      # step (which crashed on "sdkmanager tools") is not needed. This only accepts licences and makes sure
+      # the platform we compile against is present. It never fails the build: Gradle can fetch what is missing.
+      - name: Prepare Android SDK
+        continue-on-error: true
+        run: |
+          SDKM="$(command -v sdkmanager || ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | tail -n 1)"
+          if [ -n "$SDKM" ]; then
+            yes | "$SDKM" --licenses > /dev/null || true
+            "$SDKM" "platforms;android-36" "build-tools;36.0.0" || true
+          else
+            echo "sdkmanager not found; relying on the SDK already on the runner."
+          fi
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -58,8 +70,16 @@ jobs:
           NEXT_PUBLIC_SUPPORT_URL: ${{ vars.SUPPORT_URL }}
         run: node scripts/export.mjs
 
-      - name: Decode keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+      - name: Decode and check keystore
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KP: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KA: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          printf '%s' "$KS" | tr -d ' \r\n' | base64 -d > "$RUNNER_TEMP/release.jks" \
+            || { echo "::error::ANDROID_KEYSTORE_BASE64 is not valid base64. Re-copy it from PowerShell and save the secret again."; exit 1; }
+          keytool -list -keystore "$RUNNER_TEMP/release.jks" -storepass "$KP" -alias "$KA" > /dev/null 2>&1 \
+            || { echo "::error::The keystore opened badly. Check ANDROID_KEYSTORE_PASSWORD and that ANDROID_KEY_ALIAS is exactly: exammate"; exit 1; }
 
       - name: Build signed APK
         working-directory: android
