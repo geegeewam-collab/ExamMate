@@ -30,3 +30,16 @@ export const blocked = async (store: Store, bucket: string, ip: string, max: num
   (await store.hit(`${bucket}:${ip}`, ttlSec, 0)) >= max;
 export const recordFail = (store: Store, bucket: string, ip: string, ttlSec = 600) =>
   store.hit(`${bucket}:${ip}`, ttlSec, 1);
+
+/** Wraps a route so an unexpected failure (usually the database connection) returns readable JSON, not a bare 500. */
+export const safe = (fn: (req: Request) => Promise<Response>) => async (req: Request): Promise<Response> => {
+  try {
+    return await fn(req);
+  } catch (e) {
+    console.error('Server error:', e);
+    return json({
+      code: 'server',
+      error: 'The server hit a problem, most likely its database connection. Open /api/health on your site to see what is missing.',
+    }, 503);
+  }
+};

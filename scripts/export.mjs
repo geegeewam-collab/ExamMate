@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
-const HIDE = ['app/api', 'app/admin'];
+const HIDE = ['app/api', 'app/admin', 'app/download'];
 const STASH = '.export-hidden';
 
 const run = (cmd, args, env = {}) => {

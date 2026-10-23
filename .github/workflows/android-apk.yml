@@ -1,0 +1,96 @@
+# Builds the signed Android APK and attaches it to a GitHub Release.
+#
+# To publish a new version:   git tag v1.0.0   then   git push --tags
+# The APK appears under Releases as ExamMate.apk.
+# (Actions > "Build Android APK" > Run workflow builds an APK you can download from the run page, without a release.)
+name: Build Android APK
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check signing secrets
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KP: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KA: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KK: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for v in KS KP KA KK; do
+            if [ -z "${!v}" ]; then
+              echo "::error::A signing secret is missing. Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD under Settings > Secrets and variables > Actions. See the README."
+              exit 1
+            fi
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build the app bundle and sync it into Android
+        env:
+          # Your website. Override with a repository variable named APP_URL if it ever changes.
+          NEXT_PUBLIC_API_URL: ${{ vars.APP_URL || 'https://exam-mate-one.vercel.app' }}
+          NEXT_PUBLIC_SUPPORT_URL: ${{ vars.SUPPORT_URL }}
+        run: node scripts/export.mjs
+
+      - name: Decode keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - name: Build signed APK
+        working-directory: android
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="0.0.${GITHUB_RUN_NUMBER}"; fi
+          chmod +x ./gradlew
+          ./gradlew assembleRelease -PappVersionCode="${GITHUB_RUN_NUMBER}" -PappVersionName="$VERSION"
+
+      - name: Name the APK
+        run: cp android/app/build/outputs/apk/release/app-release.apk ExamMate.apk
+
+      - name: Keep a copy on the run page
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExamMate-apk
+          path: ExamMate.apk
+
+      - name: Publish to GitHub Releases
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ExamMate.apk
+          tag_name: ${{ github.ref_name }}
+          name: Exam Mate ${{ github.ref_name }}
+          generate_release_notes: true
+          # Optional: keep the code repo private and publish downloads in a separate PUBLIC repo.
+          # Set repository variable RELEASES_REPO (e.g. yourname/exammate-downloads) and secret RELEASES_TOKEN.
+          repository: ${{ vars.RELEASES_REPO || github.repository }}
+          token: ${{ secrets.RELEASES_TOKEN || github.token }}

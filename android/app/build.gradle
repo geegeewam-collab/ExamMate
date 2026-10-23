@@ -7,8 +7,9 @@ android {
         applicationId "com.exammate.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        // The GitHub workflow passes these so every release gets a higher version number (needed for updates)
+        versionCode = Integer.parseInt((project.findProperty('appVersionCode') ?: '1').toString())
+        versionName = (project.findProperty('appVersionName') ?: '1.0').toString()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +17,24 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            // Set by the GitHub workflow (or your own shell) from your private keystore. Never commit the keystore.
+            def ksFile = System.getenv('KEYSTORE_FILE')
+            if (ksFile) {
+                storeFile file(ksFile)
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS')
+                keyPassword System.getenv('KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // With no keystore (local experiments) fall back to the debug key so the APK still installs.
+            signingConfig signingConfigs.release.storeFile ? signingConfigs.release : signingConfigs.debug
         }
     }
 }

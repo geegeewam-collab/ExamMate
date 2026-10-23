@@ -48,11 +48,17 @@ export async function handleAnswer(req: Request, store: Store): Promise<Response
 
   let last = { status: 502, msg: '' };
   for (const model of await models(apiKey)) {
-    const r = await fetch(`${API}/models/${model}:generateContent`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: schema } }),
-    });
+    let r: Response;
+    try {
+      r = await fetch(`${API}/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: schema } }),
+      });
+    } catch (e) {
+      last = { status: 502, msg: `${model}: could not reach Google (${String((e as Error)?.message || e).slice(0, 60)})` };
+      continue;
+    }
     if (r.ok) {
       const d = await r.json();
       const raw = (d.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text || '').join('').trim();

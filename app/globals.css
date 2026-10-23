@@ -298,3 +298,8 @@ button.link { background: none; border: 0; padding: 8px; font: inherit; font-siz
 .steps p { margin: 2px 0 0; font-size: 14px; color: var(--text2); line-height: 1.35; }
 .step-num { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; font-size: 14px; font-weight: 700; color: var(--accent-ink); background: var(--accent); }
 .setup-card .fine { line-height: 1.45; }
+
+/* ---------- download page ---------- */
+.dl { width: min(100%, 440px); }
+.dl .steps { margin: 6px 0 2px; }
+.dl .btn { text-decoration: none; }
