@@ -2,80 +2,75 @@
 
 Snap a photo of exam questions. Exam Mate answers them and reads the answers aloud slowly, with a pause after each phrase so the student can write.
 
-The app is **licensed**: it only works on a device that has activated a valid key that you issued. You manage keys from a private web dashboard.
+**One Vercel project does everything.** Your site `https://exam-mate-one.vercel.app` serves the student app at `/`, **your admin dashboard at `/admin`**, and the server (`/api/...`). The Android app talks to the same site.
 
 ```
-ExamMate-main/
-├─ app/, src/        The student app (Next.js static export, wrapped by Capacitor for Android)
-├─ android/          Android project (unchanged)
-├─ admin/            YOUR side: license server + dashboard + the AI endpoint. Deploys as its own Vercel project
-├─ tests/            App tests            (npm test)
-└─ _unused/          Old code kept for reference (voice prototype, old standalone reader, old passcode route)
+app/        Pages (student app "/", dashboard "/admin") and the server routes (app/api)
+src/        Student app code
+server/     License, owner and photo-answer logic (no framework, fully tested)
+android/    Android project (icon and splash already set)
+scripts/    export.mjs builds the Android bundle, test.mjs runs the tests
+tests/      Unit tests (npm test)
+_unused/    Old code kept for reference
 ```
 
-## How access works
+## Who needs what
 
-| Step | What happens |
-|---|---|
-| Student opens the app | Activation screen. Nothing else is reachable. |
-| Enters a key | App sends key + its device ID to your server. First time: the key is bound to that device and a signed token is stored on the phone. |
-| Friend tries the same key | Refused: "This license is already used on another device." |
-| Every launch / return to the app | App asks the server "is my token still valid?". Revoked, deleted or reset means back to the activation screen. |
-| Every photo | Sent to **your** server with the token. Server re-checks the license, applies a daily limit, and only then calls Gemini. The Gemini key never leaves the server, so a copied or modified APK gets nothing. |
-| No internet | The app still opens for up to 14 days after the last successful check (reading pasted text, history, settings). Photos need internet. |
+| | License key | Gemini key | Sign-in |
+|---|---|---|---|
+| **Student** (paid once) | Entered **once**, on first launch of a device | Their **own free** key, set up once with a guided screen | Nothing after that |
+| **You (owner)** | **Never** | **Never.** Your server key is used | Admin password, once per device |
 
-## One-time setup
+Students never see an owner option. After the first activation the app does not ask for the key again; it re-checks quietly in the background.
 
-### 1. Deploy the admin (your side)
-1. In Vercel, **Add New > Project**, pick this repo, and set **Root Directory** to `admin`.
-2. In the project, **Storage / Marketplace > Upstash Redis** (free plan). Connect it to the project. This adds the Redis variables automatically.
-3. **Settings > Environment Variables**:
-   - `ADMIN_PASSWORD` : long and private
-   - `TOKEN_SECRET` : `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` (changing it later logs everyone out)
-   - `GEMINI_API_KEY` : from Google AI Studio
-   - `DAILY_LIMIT` : photos per license per day (default 60). This protects your Gemini bill.
-4. Redeploy.
+## Setup (one time)
 
-### 2. Get into the admin (this is how YOU get in)
-Open `https://YOUR-ADMIN-PROJECT.vercel.app/admin` and sign in with `ADMIN_PASSWORD`.
+1. Run `npm install` once on your computer (it adds `@upstash/redis` and refreshes `package-lock.json`), then **push to GitHub**. Your existing Vercel project `exam-mate-one` redeploys automatically.
+2. In Vercel, open the project: **Settings > Build and Development**. If **Output Directory** shows an override such as `out`, clear it (leave the default). The website is now a normal Next.js build.
+3. **Storage / Marketplace > Upstash Redis** (free plan). Connect it to the project. This adds its variables for you.
+4. **Settings > Environment Variables** (add all three, then redeploy):
+   - `ADMIN_PASSWORD`: long and private. **This is your login. There is no sign-up.**
+   - `TOKEN_SECRET`: run `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and paste the result.
+   - `GEMINI_API_KEY`: your own key from https://aistudio.google.com/apikey. Used only for your owner devices.
+5. Open `https://exam-mate-one.vercel.app/admin` and sign in with `ADMIN_PASSWORD`.
 
-Generate a license labelled **Owner** with **3 devices**. Use that key in the app on your own phone(s). You are a normal licensed user; the dashboard is where you manage everyone else.
+### Getting into the app yourself (owner)
+Open the app (website or APK). On the first screen **tap the app icon 5 times**. An **Owner sign-in** box appears. Enter the same `ADMIN_PASSWORD`. You are in with no license key and no Gemini key. Settings then shows **Owner device** and a button to open the admin dashboard.
 
-### 3. Point the app at your admin
-Create `.env.local` in the project root (see `.env.example`):
+If you ever change `ADMIN_PASSWORD`, every owner device is signed out and signs in again with the new one.
 
+### Android app
+Create `.env.local` in the project root:
 ```
-NEXT_PUBLIC_API_URL=https://YOUR-ADMIN-PROJECT.vercel.app
+NEXT_PUBLIC_API_URL=https://exam-mate-one.vercel.app
 NEXT_PUBLIC_SUPPORT_URL=https://wa.me/2547XXXXXXXX
 ```
-
-Then build the Android app:
-
+Then:
 ```
 npm install
-npm run cap:sync
-npm run cap:open        # opens Android Studio: Build > Build APK
+npm run cap:sync     # builds the app bundle and copies it into android/
+npm run cap:open     # opens Android Studio, then Build > Build APK
 ```
+The website needs no `NEXT_PUBLIC_API_URL`. Only the Android build does.
 
-If you also host the app on Vercel as a website, add the same two variables there (Settings > Environment Variables).
+## Selling to students
 
-## Day to day (admin dashboard)
+1. `/admin` > **New license**: type the student's name, Generate, copy the key, send it.
+2. Student installs the app, enters the key (once), then follows the **Connect your free Gemini key** screen: it links to Google AI Studio, they create a key, paste it, done.
+3. To take access away: **Revoke**. Changed phone: **Reset device**. Remove for good: **Delete**.
 
-- **Give access**: Generate (1 to 50 at once, name them), copy the key, send it to the student.
-- **Deny access**: Revoke. They are locked out the next time the app opens or sends a photo. Restore brings them back.
-- **Student changed phone**: Reset device, then they enter the same key on the new phone.
-- **Remove for good**: Delete.
-- Tap a key to copy it. Status shows Active, Not activated, or Revoked.
+### How the Gemini key works
+- Google's free tier is per Google account, so each student uses their own. Your key is never given to students.
+- The key is stored only on the student's phone. For each photo it is sent through your server to Google and is never saved on the server.
+- If a student sees a limit message, their free allowance is used up for a while. Free limits are set by Google and have been tightened before.
 
 ## Tests
-
-- `npm test` : app logic (reading engine, text splitting)
-- `cd admin && npm test` : license, admin API and photo endpoint (device binding, forged tokens, brute force, daily limit)
-- `npm run typecheck`
+`npm test` runs the reading engine, text splitting, and the server tests (licenses, device binding, forged tokens, owner sign-in, student keys, brute force). `npm run typecheck` checks types.
 
 ## If something goes wrong
-
-- **"Network error" on activation**: `NEXT_PUBLIC_API_URL` is missing or wrong, or you did not rebuild after setting it.
-- **"The server is missing its settings"**: `TOKEN_SECRET` (or `GEMINI_API_KEY` for photos) is not set on the admin project. Redeploy after adding.
-- **Wrong password forever**: after 8 wrong attempts an IP is blocked for 10 minutes.
-- **Student says "already used on another device"**: they reinstalled or changed phone. Use Reset device.
+- **`/admin` shows 404**: the new code is not deployed yet, or Vercel is serving an old build. Check the latest deployment is green, and that Output Directory is not overridden.
+- **"The server is missing its settings"**: `TOKEN_SECRET` is not set. Add it and redeploy.
+- **"Network error" in the Android app**: `NEXT_PUBLIC_API_URL` is missing from `.env.local`, or you did not run `npm run cap:sync` after adding it.
+- **Wrong password / blocked**: after 8 wrong attempts an IP is blocked for 10 minutes.
+- **Student: "already used on another device"**: they changed or reset their phone. Use **Reset device**.
+- **Photos fail with a Gemini message**: the student's key was refused or their free allowance is used up. They can change it in Settings.

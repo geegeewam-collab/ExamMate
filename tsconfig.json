@@ -6,5 +6,5 @@
     "plugins": [{ "name": "next" }], "paths": { "@/*": ["./*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "admin", "_unused", "tests"]
+  "exclude": ["node_modules", "_unused", "tests", ".export-hidden", "scripts"]
 }

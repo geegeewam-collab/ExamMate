@@ -11,12 +11,15 @@ import {
 import {
   loadHistory, loadResume, photosToday, saveHistory, type HistoryItem, type Resume, type Settings,
 } from '../lib/settings';
+import { apiBase } from '../lib/config';
+import { GeminiKey, maskKey } from '../services/gemini-key';
 import { LicenseService } from '../services/license-service';
-import { answerPhotos, LicenseError, AnswerError } from '../services/answer-service';
+import { answerPhotos, AnswerError, KeyError, LicenseError } from '../services/answer-service';
 import ReadTab, { type Shot } from './ReadTab';
 import HistoryTab from './HistoryTab';
 import SettingsTab from './SettingsTab';
 import Player from './Player';
+import GeminiSetup from './GeminiSetup';
 import { Icon, type IconName } from './ui';
 
 type Tab = 'read' | 'history' | 'settings';
@@ -38,6 +41,9 @@ export default function Shell({
   const [count, setCount] = useState(0);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [shot, setShot] = useState<Shot | null>(null);
+  const [owner, setOwner] = useState<boolean | null>(null);
+  const [geminiKey, setGeminiKey] = useState<string | null>(null); // null until loaded
+  const [setup, setSetup] = useState<{ message?: string } | null>(null);
 
   const camRef = useRef<HTMLInputElement | null>(null);
   const galRef = useRef<HTMLInputElement | null>(null);
@@ -50,6 +56,19 @@ export default function Shell({
   useEffect(() => {
     live.current = { text, snap, settings };
   });
+
+  /* who is this device? students need their own Gemini key; the owner uses the server's */
+  useEffect(() => {
+    void (async () => {
+      const [o, k] = await Promise.all([LicenseService.isOwner(), GeminiKey.get()]);
+      setOwner(o);
+      setGeminiKey(k);
+      if (!o && !k && !kv.get('key_prompted', false)) {
+        kv.set('key_prompted', true);
+        setSetup({}); // first launch: walk the student through getting a free key
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     setHistory(loadHistory());
@@ -155,6 +174,11 @@ export default function Shell({
           onLocked('This license is no longer valid. Enter a valid key to continue.');
           return;
         }
+        if (e instanceof KeyError) {
+          setShot(null);
+          setSetup({ message: e.message });
+          return;
+        }
         const aborted = (e as Error).name === 'AbortError';
         const a = e instanceof AnswerError ? e : null;
         setShot((s) => s && {
@@ -169,6 +193,15 @@ export default function Shell({
     },
     [onLocked, startReading],
   );
+
+  /** Students must connect their Gemini key before the first photo. Returns true when it opened the guide. */
+  const needsKeyFirst = () => {
+    if (owner === false && !geminiKey) {
+      setSetup({ message: 'Add your free Gemini key first. It lets Exam Mate read your photos.' });
+      return true;
+    }
+    return false;
+  };
 
   async function pasteAndStart() {
     primeSpeech();
@@ -206,8 +239,8 @@ export default function Shell({
             settings={settings} setStyle={(style) => update({ style })}
             text={text} setText={setText} msg={msg} shot={shot} count={count} resume={resume}
             camRef={camRef} galRef={galRef}
-            onCamera={() => { primeSpeech(); camRef.current?.click(); }}
-            onGallery={() => { primeSpeech(); galRef.current?.click(); }}
+            onCamera={() => { if (needsKeyFirst()) return; primeSpeech(); camRef.current?.click(); }}
+            onGallery={() => { if (needsKeyFirst()) return; primeSpeech(); galRef.current?.click(); }}
             onPhotos={(f) => void handlePhotos(f)}
             onFile={(f) => void loadFile(f)}
             onStart={() => { primeSpeech(); startReading(); }}
@@ -224,7 +257,15 @@ export default function Shell({
             onClear={() => { setHistory([]); saveHistory([]); }}
           />
         )}
-        {tab === 'settings' && <SettingsTab s={settings} set={update} voices={voices} speech={speechSupported()} />}
+        {tab === 'settings' && (
+          <SettingsTab
+            s={settings} set={update} voices={voices} speech={speechSupported()}
+            owner={owner} keyMask={geminiKey ? maskKey(geminiKey) : ''}
+            onKey={() => setSetup({})}
+            onRemoveKey={async () => { await GeminiKey.clear(); setGeminiKey(''); }}
+            adminUrl={`${apiBase() ?? ''}/admin`}
+          />
+        )}
       </div>
 
       <nav className="tabbar" aria-label="Main">
@@ -237,6 +278,13 @@ export default function Shell({
       </nav>
 
       {snap.active && <Player engine={engine} snap={snap} />}
+      {setup && (
+        <GeminiSetup
+          message={setup.message} replacing={!!geminiKey}
+          onSaved={(k) => { setGeminiKey(k); setSetup(null); }}
+          onSkip={() => setSetup(null)}
+        />
+      )}
     </>
   );
 }

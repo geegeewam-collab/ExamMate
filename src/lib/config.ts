@@ -1,4 +1,16 @@
-// Set NEXT_PUBLIC_API_URL in .env.local to your deployed admin project, e.g. https://exammate-admin.vercel.app
-export const API_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
+const FROM_ENV = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
+
+/**
+ * Where the server (licenses + photo answers) lives.
+ * - On the website it is the same site, so no setting is needed.
+ * - In the Android app there is no "same site", so NEXT_PUBLIC_API_URL must be set at build time.
+ * Returns null when the app is a native build with no URL configured.
+ */
+export function apiBase(): string | null {
+  if (FROM_ENV) return FROM_ENV;
+  const native = typeof window !== 'undefined' && !!(window as any).Capacitor?.isNativePlatform?.();
+  return native ? null : '';
+}
+
 // Optional: where students go to get a license (a WhatsApp link, website, mailto:...).
 export const SUPPORT_URL = process.env.NEXT_PUBLIC_SUPPORT_URL || '';

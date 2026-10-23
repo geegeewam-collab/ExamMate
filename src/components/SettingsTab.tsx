@@ -6,8 +6,11 @@ import { Icon, Range, Segmented, Switch } from './ui';
 const same = (s: Settings, p: Partial<Settings>) => (Object.keys(p) as (keyof Settings)[]).every((k) => s[k] === p[k]);
 
 export default function SettingsTab({
-  s, set, voices, speech,
-}: { s: Settings; set(p: Partial<Settings>): void; voices: VoiceOption[]; speech: boolean }) {
+  s, set, voices, speech, owner, keyMask, onKey, onRemoveKey, adminUrl,
+}: {
+  s: Settings; set(p: Partial<Settings>): void; voices: VoiceOption[]; speech: boolean;
+  owner: boolean | null; keyMask: string; onKey(): void; onRemoveKey(): void; adminUrl: string;
+}) {
   const preset = (['notes', 'careful', 'normal'] as const).find((k) => same(s, PRESETS[k])) ?? 'custom';
   return (
     <>
@@ -67,9 +70,32 @@ export default function SettingsTab({
         <div className="item"><span>Read as soon as answers are ready</span><Switch label="Read as soon as answers are ready" checked={s.auto} onChange={(auto) => set({ auto })} /></div>
       </div>
 
+      <div className="section-label">AI</div>
+      <div className="list glass">
+        {owner ? (
+          <div className="item"><span>Gemini</span><span className="ok"><Icon name="check" size={18} /> Exam Mate server key</span></div>
+        ) : (
+          <>
+            <div className="item">
+              <span>Your Gemini key</span>
+              <span className={keyMask ? 'val mono-val' : 'val warn-val'}>{keyMask || 'Not set'}</span>
+            </div>
+            <div className="item acts-row">
+              <button className="btn tinted sm" onClick={onKey}><Icon name="key" size={16} /> {keyMask ? 'Change key' : 'Add key'}</button>
+              {keyMask && <button className="btn danger-ghost sm" onClick={onRemoveKey}>Remove</button>}
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="section-label">License</div>
       <div className="list glass">
-        <div className="item"><span>Status</span><span className="ok"><Icon name="check" size={18} /> Active on this device</span></div>
+        <div className="item"><span>Status</span><span className="ok"><Icon name="check" size={18} /> {owner ? 'Owner device' : 'Active on this device'}</span></div>
+        {owner && (
+          <div className="item acts-row">
+            <a className="btn tinted sm" href={adminUrl} target="_blank" rel="noopener noreferrer"><Icon name="external" size={16} /> Open admin dashboard</a>
+          </div>
+        )}
       </div>
       {!speech && <p className="foot warn">This device has no speech support, so reading aloud will not work.</p>}
       <p className="foot">Earbuds: tap once to pause or resume. Next skips a phrase. Previous repeats it; press twice to go back one.</p>

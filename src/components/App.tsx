@@ -6,12 +6,13 @@ import Activation from './Activation';
 import Shell from './Shell';
 import { Spinner } from './ui';
 
-type Phase = 'loading' | 'locked' | 'ready';
+type Phase = 'loading' | 'locked' | 'stale' | 'ready';
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('loading');
   const [notice, setNotice] = useState('');
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
+  const [retrying, setRetrying] = useState(false);
 
   const gate = useCallback(async () => {
     const s = await LicenseService.checkLocalBinding();
@@ -19,11 +20,11 @@ export default function App() {
       setPhase('ready');
       return;
     }
-    setNotice(
-      s === 'invalid' ? 'This license is no longer valid. Enter a valid key to continue.'
-      : s === 'stale' ? 'Connect to the internet to verify your license.'
-      : '',
-    );
+    if (s === 'stale') {
+      setPhase('stale');
+      return;
+    }
+    setNotice(s === 'invalid' ? 'This license is no longer valid. Enter a valid key to continue.' : '');
     setPhase('locked');
   }, []);
 
@@ -62,6 +63,19 @@ export default function App() {
     <>
       <div className="bg" aria-hidden="true" />
       {phase === 'loading' && <div className="splash"><Spinner /></div>}
+      {phase === 'stale' && (
+        <main className="auth">
+          <section className="glass auth-card">
+            <div className="logo"><img src="/icon-256.png" alt="" width={84} height={84} /></div>
+            <h1>Can&rsquo;t check your license</h1>
+            <p className="sub">You have been offline for a while. Connect to the internet and try again. You will not need to enter your key again.</p>
+            <button className="btn primary lg" disabled={retrying}
+              onClick={async () => { setRetrying(true); await gate(); setRetrying(false); }}>
+              {retrying ? <Spinner /> : 'Try again'}
+            </button>
+          </section>
+        </main>
+      )}
       {phase === 'locked' && <Activation notice={notice} onActivated={() => { setNotice(''); setPhase('ready'); }} />}
       {phase === 'ready' && <Shell settings={settings} update={update} onLocked={lock} />}
     </>
