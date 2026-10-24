@@ -171,6 +171,7 @@ test('a student cannot turn a license token into an owner token', async () => {
 
 /* ---------------- /api/answer ---------------- */
 const STUDENT_KEY = 'AIzaStudentOwnKey_1234567890abcdef';
+const STUDENT_AUTH_KEY = 'AQ.Ab8RN6JExampleKey1234567890abcdef';
 const fakeGemini = (status = 200, answer = 'Four') => {
   const calls: { url: string; key: string | null }[] = [];
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -206,6 +207,14 @@ test('answer: a student must bring their own Gemini key', async () => {
   assert.equal((await r.json()).code, 'need_key');
   assert.equal((await handleAnswer(ans({ ...h, 'x-gemini-key': 'short' }), st)).status, 400);
   assert.equal(calls.length, 0, 'nothing was sent to Google');
+});
+
+test('answer: a new AQ. authorization key passes input validation and is forwarded to Google', async () => {
+  const { st, h } = await activated();
+  const calls = fakeGemini(200, 'Four');
+  const r = await handleAnswer(ans({ ...h, 'x-gemini-key': STUDENT_AUTH_KEY }), st);
+  assert.equal(r.status, 200);
+  assert.ok(calls.length >= 2 && calls.every((c) => c.key === STUDENT_AUTH_KEY));
 });
 
 test('answer: student key is used for Google and the server key is never used or leaked', async () => {

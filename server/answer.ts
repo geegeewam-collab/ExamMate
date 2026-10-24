@@ -5,7 +5,7 @@ import { API, models, parse, prompt, schema } from './gemini';
 const fail = (code: string, error: string, status: number, detail = '') =>
   json({ code, error, detail: String(detail).slice(0, 240) }, status);
 
-const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,200}$/;
+const KEY_SHAPE = /^[A-Za-z0-9._\-]{20,250}$/;
 
 /**
  * POST /api/answer: photos in, spoken-style answers out. Only for devices with a valid license.
