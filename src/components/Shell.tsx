@@ -12,6 +12,7 @@ import {
   loadHistory, loadResume, photosToday, saveHistory, type HistoryItem, type Resume, type Settings,
 } from '../lib/settings';
 import { apiBase } from '../lib/config';
+import type { Updater } from '../hooks/useUpdater';
 import { GeminiKey, maskKey } from '../services/gemini-key';
 import { LicenseService } from '../services/license-service';
 import { answerPhotos, AnswerError, KeyError, LicenseError } from '../services/answer-service';
@@ -30,8 +31,11 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
 ];
 
 export default function Shell({
-  settings, update, onLocked,
-}: { settings: Settings; update(p: Partial<Settings>): void; onLocked(message: string): void }) {
+  settings, update, onLocked, updater, onBusy,
+}: {
+  settings: Settings; update(p: Partial<Settings>): void; onLocked(message: string): void;
+  updater: Updater; onBusy(busy: boolean): void;
+}) {
   const [tab, setTab] = useState<Tab>('read');
   const [engine, snap] = useEngine(settings);
   const [text, setText] = useState('');
@@ -93,6 +97,9 @@ export default function Shell({
 
   /* keep the screen awake and the audio alive only while a session is running */
   const running = snap.active && !snap.finished;
+  const working = running || !!setup || !!shot?.busy;
+  useEffect(() => onBusy(working), [onBusy, working]);
+  useEffect(() => () => onBusy(false), [onBusy]);
   useEffect(() => {
     if (running) void wake();
     else unwake();
@@ -264,6 +271,7 @@ export default function Shell({
             onKey={() => setSetup({})}
             onRemoveKey={async () => { await GeminiKey.clear(); setGeminiKey(''); }}
             adminUrl={`${apiBase() ?? ''}/admin`}
+            updater={updater}
           />
         )}
       </div>

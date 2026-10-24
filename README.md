@@ -98,6 +98,16 @@ The APK itself can be public: it is useless without a license key you issued.
 
 **Keep the code private but the download public:** create a second, empty **public** repo (e.g. `exammate-downloads`). In your code repo add the variable `RELEASES_REPO` = `yourname/exammate-downloads` and a secret `RELEASES_TOKEN` (a fine-grained personal access token with **Contents: read and write** on that repo). Then in Vercel set `NEXT_PUBLIC_APK_URL` to `https://github.com/yourname/exammate-downloads/releases/latest/download/ExamMate.apk`.
 
+#### Update notifications (how students get new versions)
+The app checks for a new version when it opens, when it comes back to the front (at most every 30 minutes), and every 6 hours while it stays open. If your newest release is higher than the installed one, it shows **Exam Mate Update Available** with **Update Now** and **Later**. Update Now downloads `ExamMate.apk` in the phone's browser; the student taps it to install, and it installs **over** the old app, keeping the license, settings and history (same app ID and same signing key). **Later** hides it for a day, and a newer version prompts again straight away. Settings > About has a **Check for updates** button. The prompt never appears while an answer is being read or a photo is being processed.
+
+To make it work:
+1. In Vercel, set `RELEASES_REPO` to `owner/repo` of the repo that holds your releases (skip it only if the releases are in the same repo Vercel deploys from), then redeploy. `/api/health` shows `updates: "on"` once it is set.
+2. Tag every release with **three numbers**: `v1.0.1`, `v1.1.0`, `v2.0.0`. The workflow refuses tags like `v1.0` or `v1.0.1-beta`, because the app could not compare them.
+3. Check the first build you install: **Settings > About** should show the version. If there is no About section, the version was not baked into that build and it will not check for updates.
+
+**One limit to know:** only builds that contain this feature can notify. A phone still running an older version (without Settings > About) has no update code inside it, so it will never be told. Those students must install the first update-capable version once by hand (send them the `/download` link). From that install onward, every later release notifies them automatically.
+
 ### 3. Google Play (later, optional)
 Not needed to start. Google is rolling out "developer verification" for apps installed outside the Play Store: enforcement began on 30 Sep 2026 in Brazil, Indonesia, Singapore and Thailand, and Google says it expands worldwide in 2027. When it reaches your buyers, unverified APKs will need extra install steps. Registering as an Android developer (one-time fee of about $25) before then avoids that. Check Google's current rules at that time.
 

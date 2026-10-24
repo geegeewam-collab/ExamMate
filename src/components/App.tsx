@@ -1,9 +1,12 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { DEFAULTS, loadSettings, saveSettings, type Settings } from '../lib/settings';
+import { useUpdater } from '../hooks/useUpdater';
+import { installedVersion } from '../services/update-service';
 import { LicenseService } from '../services/license-service';
 import Activation from './Activation';
 import Shell from './Shell';
+import UpdatePrompt from './UpdatePrompt';
 import { Spinner } from './ui';
 
 type Phase = 'loading' | 'locked' | 'stale' | 'ready';
@@ -13,6 +16,8 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [settings, setSettings] = useState<Settings>(DEFAULTS);
   const [retrying, setRetrying] = useState(false);
+  const [busy, setBusy] = useState(false); // reading aloud or answering a photo: never interrupt that with a dialog
+  const updater = useUpdater();
 
   const gate = useCallback(async () => {
     const s = await LicenseService.checkLocalBinding();
@@ -77,7 +82,13 @@ export default function App() {
         </main>
       )}
       {phase === 'locked' && <Activation notice={notice} onActivated={() => { setNotice(''); setPhase('ready'); }} />}
-      {phase === 'ready' && <Shell settings={settings} update={update} onLocked={lock} />}
+      {phase === 'ready' && <Shell settings={settings} update={update} onLocked={lock} updater={updater} onBusy={setBusy} />}
+      {phase !== 'loading' && !busy && updater.snap.prompt && updater.snap.update && (
+        <UpdatePrompt
+          update={updater.snap.update} installed={installedVersion()}
+          onLater={updater.later} onStarted={updater.started} onClose={updater.close}
+        />
+      )}
     </>
   );
 }

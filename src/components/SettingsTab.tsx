@@ -1,16 +1,19 @@
 'use client';
 import { PRESETS, type Settings } from '../lib/settings';
 import type { VoiceOption } from '../lib/platform';
+import type { Updater } from '../hooks/useUpdater';
+import { installedVersion } from '../services/update-service';
 import { Icon, Range, Segmented, Switch } from './ui';
 
 const same = (s: Settings, p: Partial<Settings>) => (Object.keys(p) as (keyof Settings)[]).every((k) => s[k] === p[k]);
 
 export default function SettingsTab({
-  s, set, voices, speech, owner, keyMask, onKey, onRemoveKey, adminUrl,
+  s, set, voices, speech, owner, keyMask, onKey, onRemoveKey, adminUrl, updater,
 }: {
   s: Settings; set(p: Partial<Settings>): void; voices: VoiceOption[]; speech: boolean;
-  owner: boolean | null; keyMask: string; onKey(): void; onRemoveKey(): void; adminUrl: string;
+  owner: boolean | null; keyMask: string; onKey(): void; onRemoveKey(): void; adminUrl: string; updater: Updater;
 }) {
+  const { manual } = updater.snap;
   const preset = (['notes', 'careful', 'normal'] as const).find((k) => same(s, PRESETS[k])) ?? 'custom';
   return (
     <>
@@ -97,6 +100,23 @@ export default function SettingsTab({
           </div>
         )}
       </div>
+      {updater.supported && (
+        <>
+          <div className="section-label">About</div>
+          <div className="list glass">
+            <div className="item"><span>Version</span><span className="val">{installedVersion()}</span></div>
+            <div className="item acts-row">
+              <button className="btn tinted sm" disabled={manual === 'checking'} onClick={() => void updater.checkNow()}>
+                <Icon name="download" size={16} /> {manual === 'checking' ? 'Checking…' : 'Check for updates'}
+              </button>
+              <span className={'upd-status' + (manual === 'failed' ? ' warn' : '')} role="status" aria-live="polite">
+                {manual === 'current' && 'You have the latest version.'}
+                {manual === 'failed' && "Couldn't check. Connect to the internet and try again."}
+              </span>
+            </div>
+          </div>
+        </>
+      )}
       {!speech && <p className="foot warn">This device has no speech support, so reading aloud will not work.</p>}
       <p className="foot">Earbuds: tap once to pause or resume. Next skips a phrase. Previous repeats it; press twice to go back one.</p>
     </>

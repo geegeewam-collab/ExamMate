@@ -63,6 +63,25 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      # One version number for everything: Gradle's versionName, the number the app shows in Settings > About, and the
+      # number the update checker compares with the newest release. The Next.js build reads NEXT_PUBLIC_APP_VERSION
+      # from the environment, so without this step the app would not know its own version and would never check.
+      # Tags must be three numbers (v1.0.1). Anything else is refused here instead of shipping an app that cannot update.
+      - name: Work out the version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            V="${GITHUB_REF_NAME#v}"
+            if ! printf '%s' "$V" | grep -Eq '^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$'; then
+              echo "::error::The tag \"$GITHUB_REF_NAME\" is not a version like v1.0.1. Use three numbers (v1.0.1, v1.2.0, v2.0.0) so the app's update checker can compare versions."
+              exit 1
+            fi
+          else
+            V="0.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "APP_VERSION=$V" >> "$GITHUB_ENV"
+          echo "NEXT_PUBLIC_APP_VERSION=$V" >> "$GITHUB_ENV"
+          echo "Building Exam Mate $V"
+
       - name: Build the app bundle and sync it into Android
         env:
           # Your website. Override with a repository variable named APP_URL if it ever changes.
@@ -89,9 +108,8 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then VERSION="${GITHUB_REF_NAME#v}"; else VERSION="0.0.${GITHUB_RUN_NUMBER}"; fi
           chmod +x ./gradlew
-          ./gradlew assembleRelease -PappVersionCode="${GITHUB_RUN_NUMBER}" -PappVersionName="$VERSION"
+          ./gradlew assembleRelease -PappVersionCode="${GITHUB_RUN_NUMBER}" -PappVersionName="$APP_VERSION"
 
       - name: Name the APK
         run: cp android/app/build/outputs/apk/release/app-release.apk ExamMate.apk

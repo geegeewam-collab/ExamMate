@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from 'react';
 
 export type IconName =
   | 'camera' | 'image' | 'clipboard' | 'doc' | 'play' | 'pause' | 'prev' | 'next' | 'repeat'
-  | 'close' | 'pencil' | 'book' | 'clock' | 'sliders' | 'check' | 'alert' | 'headphones' | 'trash' | 'copy' | 'external' | 'key';
+  | 'close' | 'pencil' | 'book' | 'clock' | 'sliders' | 'check' | 'alert' | 'headphones' | 'trash' | 'copy' | 'external' | 'key' | 'download';
 
 const PATHS: Record<IconName, ReactNode> = {
   camera: (<><path d="M4 8.5h3l1.6-2.2h6.8L17 8.5h3V19H4z" /><circle cx="12" cy="13.4" r="3.4" /></>),
@@ -25,6 +25,7 @@ const PATHS: Record<IconName, ReactNode> = {
   trash: (<><path d="M5 7h14M10 7V4.8h4V7M7 7l.8 12.2h8.4L17 7" /></>),
   external: (<><path d="M8 16L17 7M10 7h7v7" /></>),
   key: (<><circle cx="8.5" cy="14.5" r="3.8" /><path d="M11.3 11.7L19 4M16 7l2.5 2.5M14 9l1.8 1.8" /></>),
+  download: (<><path d="M12 4.5v10M7.5 10.5L12 15l4.5-4.5" /><path d="M5.5 19.5h13" /></>),
   copy: (<><rect x="8.5" y="8.5" width="11" height="11" rx="2.6" /><path d="M15.5 8.5V6.6A2.1 2.1 0 0 0 13.4 4.5H6.6A2.1 2.1 0 0 0 4.5 6.6v6.8a2.1 2.1 0 0 0 2.1 2.1h1.9" /></>),
 };
 const FILLED: IconName[] = ['play', 'pause', 'prev', 'next'];

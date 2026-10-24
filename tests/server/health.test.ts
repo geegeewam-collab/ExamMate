@@ -10,6 +10,7 @@ import type { Store } from '../../server/license';
 const goodEnv = {
   ADMIN_PASSWORD: 'super secret admin pw', TOKEN_SECRET: 'tok-secret-123', GEMINI_API_KEY: 'AIzaServerKey123',
   UPSTASH_REDIS_REST_URL: 'https://eager-owl-1234.upstash.io', UPSTASH_REDIS_REST_TOKEN: 'AXabcDEF-token', VERCEL_ENV: 'production',
+  RELEASES_REPO: 'someone/exammate-downloads',
 };
 const brokenStore = (): Store => {
   const boom = async () => { throw new Error('fetch failed'); };
@@ -22,6 +23,16 @@ test('health: all good', async () => {
   assert.equal(h.ok, true);
   assert.equal(h.database, 'ok');
   assert.deepEqual(h.hints, []);
+});
+
+test('health: without RELEASES_REPO the server is still healthy, but says update notifications are off', async () => {
+  const { RELEASES_REPO: _unused, ...env } = goodEnv;
+  const off = await health(memoryStore(), env);
+  assert.equal(off.ok, true);
+  assert.equal(off.updates, 'off');
+  assert.match(off.hints.join(' '), /RELEASES_REPO/);
+  const on = await health(memoryStore(), goodEnv);
+  assert.equal(on.updates, 'on');
 });
 
 test('health: never reveals secret values', async () => {

@@ -5,13 +5,13 @@ import type { Store } from './license';
 // so these calls are cross-origin. No cookies are used; auth travels in headers/body.
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
   'access-control-allow-headers': 'content-type, x-license-token, x-device-id, x-gemini-key',
   'access-control-max-age': '86400',
 };
 
-export const json = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...CORS } });
+export const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...CORS, ...headers } });
 export const preflight = () => new Response(null, { status: 204, headers: CORS });
 
 export const secret = () => process.env.TOKEN_SECRET || '';

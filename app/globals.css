@@ -264,6 +264,7 @@ input[type='range']::-moz-range-thumb { width: 26px; height: 26px; border-radius
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 @keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes fade-in { from { opacity: 0; } }
 @keyframes sheet-in { from { opacity: 0; transform: translateY(18px) scale(0.99); } }
 
 @media (prefers-reduced-motion: reduce) {
@@ -303,3 +304,23 @@ button.link { background: none; border: 0; padding: 8px; font: inherit; font-siz
 .dl { width: min(100%, 440px); }
 .dl .steps { margin: 6px 0 2px; }
 .dl .btn { text-decoration: none; }
+
+/* ---------- update dialog (above the reading sheet and the Gemini guide) ---------- */
+.modal {
+  position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; overflow-y: auto; overscroll-behavior: contain;
+  padding: calc(env(safe-area-inset-top, 0px) + 18px) 18px calc(env(safe-area-inset-bottom, 0px) + 18px);
+  background: rgba(6, 12, 9, 0.5); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  animation: fade-in 0.2s ease-out;
+}
+.modal-card {
+  width: min(100%, 400px); padding: 26px 22px 18px; display: flex; flex-direction: column; gap: 12px; text-align: center; align-items: stretch;
+  border-radius: 30px; background: var(--glass-solid); animation: sheet-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.modal-card h2 { font-size: 24px; line-height: 1.15; font-weight: 700; letter-spacing: -0.03em; }
+.modal-card .sub { margin: -2px auto 0; font-size: 15.5px; }
+.modal-card .ver { font-size: 15px; font-weight: 600; color: var(--accent); }
+.modal-card .ver span { font-weight: 500; color: var(--text2); }
+.modal-card .fine { line-height: 1.45; }
+.modal-card .link { padding: 8px; }
+.item .upd-status { font-size: 14px; color: var(--text2); }
+.item .upd-status.warn { color: var(--danger); }
