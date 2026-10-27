@@ -1,5 +1,6 @@
 import { kv } from './storage';
 import type { PhraseMode } from './text';
+import type { WakeChoice } from './voice/wake';
 
 export interface Settings {
   rate: number;
@@ -13,11 +14,20 @@ export interface Settings {
   voice: string;
   style: 'quick' | 'learn';
   auto: boolean;
+  /** Voice assistant: ask questions out loud while reading. Off until the student turns it on. */
+  assist: boolean;
+  wakeListen: boolean;
+  wake: WakeChoice;
+  wakeCustom: string;
+  /** How long to hold the on-screen button before it listens. 0 = a simple tap. */
+  holdMs: 0 | 1000 | 3000;
+  earbudAsk: boolean;
 }
 
 export const DEFAULTS: Settings = {
   rate: 0.5, gapS: 2, pw: 0.75, mode: 'clause', twice: false, punct: false,
   advance: 'timer', lead: 0, voice: '', style: 'quick', auto: true,
+  assist: false, wakeListen: true, wake: 'exam', wakeCustom: '', holdMs: 3000, earbudAsk: false,
 };
 
 export const PRESETS: Record<'notes' | 'careful' | 'normal', Partial<Settings>> = {
@@ -44,6 +54,12 @@ export function loadSettings(): Settings {
     voice: typeof s.voice === 'string' ? s.voice : '',
     style: oneOf(s.style, ['quick', 'learn'] as const, 'quick'),
     auto: s.auto !== false,
+    assist: s.assist === true,
+    wakeListen: s.wakeListen !== false,
+    wake: oneOf(s.wake, ['exam', 'reader', 'hello', 'custom'] as const, 'exam'),
+    wakeCustom: typeof s.wakeCustom === 'string' ? s.wakeCustom.slice(0, 40) : '',
+    holdMs: oneOf(s.holdMs, [0, 1000, 3000] as const, 3000),
+    earbudAsk: s.earbudAsk === true,
   };
 }
 

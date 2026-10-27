@@ -1,18 +1,20 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEngine } from '../hooks/useEngine';
+import { useAssistant } from '../hooks/useAssistant';
+import { createRecognizer } from '../lib/voice/recognizer';
+import { WAKE_PRESETS } from '../lib/voice/wake';
 import { kv } from '../lib/storage';
 import { wordCount } from '../lib/text';
 import { readTextFile } from '../lib/files';
 import {
-  bindMediaSession, primeSpeech, setMediaInfo, speechSupported, startKeepAlive, stopKeepAlive, unwake, wake,
+  bindMediaSession, deviceLang, primeSpeech, setMediaInfo, speechSupported, startKeepAlive, stopKeepAlive, unwake, wake,
   watchVoices, type VoiceOption,
 } from '../lib/platform';
 import {
   loadHistory, loadResume, photosToday, saveHistory, type HistoryItem, type Resume, type Settings,
 } from '../lib/settings';
 import { apiBase } from '../lib/config';
-import type { Updater } from '../hooks/useUpdater';
 import { GeminiKey, maskKey } from '../services/gemini-key';
 import { LicenseService } from '../services/license-service';
 import { answerPhotos, AnswerError, KeyError, LicenseError } from '../services/answer-service';
@@ -31,11 +33,8 @@ const TABS: { id: Tab; label: string; icon: IconName }[] = [
 ];
 
 export default function Shell({
-  settings, update, onLocked, updater, onBusy,
-}: {
-  settings: Settings; update(p: Partial<Settings>): void; onLocked(message: string): void;
-  updater: Updater; onBusy(busy: boolean): void;
-}) {
+  settings, update, onLocked,
+}: { settings: Settings; update(p: Partial<Settings>): void; onLocked(message: string): void }) {
   const [tab, setTab] = useState<Tab>('read');
   const [engine, snap] = useEngine(settings);
   const [text, setText] = useState('');
@@ -48,6 +47,7 @@ export default function Shell({
   const [owner, setOwner] = useState<boolean | null>(null);
   const [geminiKey, setGeminiKey] = useState<string | null>(null); // null until loaded
   const [setup, setSetup] = useState<{ message?: string } | null>(null);
+  const [assistMsg, setAssistMsg] = useState('');
 
   const camRef = useRef<HTMLInputElement | null>(null);
   const galRef = useRef<HTMLInputElement | null>(null);
@@ -60,6 +60,21 @@ export default function Shell({
   useEffect(() => {
     live.current = { text, snap, settings };
   });
+
+  const { assistant, state: voiceState } = useAssistant({
+    settings, engine, snap,
+    getContext: () => ({ context: lastText.current.slice(0, 6000), current: live.current.snap.phrases[live.current.snap.idx] ?? '' }),
+    setRate: (rate) => update({ rate }),
+    onAnswered: (q, a) =>
+      setHistory((h) => {
+        const n = [{ t: Date.now(), text: `You asked: ${q}\nAnswer: ${a}` }, ...h].slice(0, 20);
+        saveHistory(n);
+        return n;
+      }),
+    onLicenseLost: () => { void LicenseService.clear().then(() => onLocked('This license is no longer valid. Enter a valid key to continue.')); },
+  });
+  const assistantRef = useRef(assistant);
+  useEffect(() => { assistantRef.current = assistant; }, [assistant]);
 
   /* who is this device? students need their own Gemini key; the owner uses the server's */
   useEffect(() => {
@@ -84,7 +99,7 @@ export default function Shell({
   const startReading = useCallback(
     (from = 0, body?: string) => {
       const t = (body ?? live.current.text).trim();
-      if (!speechSupported()) return setMsg('This device has no speech support, so it cannot read aloud.');
+      if (!speechSupported()) return setMsg('This browser cannot read aloud. Open Exam Mate in Chrome, or use the Android app.');
       if (!engine.start(t, from)) return setMsg('Add some text first, or take a photo of the questions.');
       lastText.current = t;
       setMsg('');
@@ -97,9 +112,6 @@ export default function Shell({
 
   /* keep the screen awake and the audio alive only while a session is running */
   const running = snap.active && !snap.finished;
-  const working = running || !!setup || !!shot?.busy;
-  useEffect(() => onBusy(working), [onBusy, working]);
-  useEffect(() => () => onBusy(false), [onBusy]);
   useEffect(() => {
     if (running) void wake();
     else unwake();
@@ -133,6 +145,12 @@ export default function Shell({
         next: () => engine.next(),
         back: () => engine.back(),
         repeat: () => engine.repeat(),
+        ask: () => {
+          const st = live.current.settings;
+          if (!st.assist || !st.earbudAsk) return false;
+          void assistantRef.current.trigger('earbud');
+          return true;
+        },
       }),
     [engine],
   );
@@ -210,6 +228,18 @@ export default function Shell({
     return false;
   };
 
+  async function toggleAssist(on: boolean): Promise<string> {
+    setAssistMsg('');
+    if (!on) { update({ assist: false }); return ''; }
+    const r = await createRecognizer(deviceLang());
+    const native = typeof window !== 'undefined' && !!(window as any).Capacitor?.isNativePlatform?.();
+    const fail = (m: string) => { setAssistMsg(m); return m; };
+    if (!r) return fail(native ? 'Voice is not available on this phone.' : 'This browser cannot do voice. Use Chrome, or the Android app.');
+    if (!(await r.requestPermission())) return fail('Microphone permission was denied. Allow it in your phone or browser settings, then try again.');
+    update({ assist: true });
+    return '';
+  }
+
   async function pasteAndStart() {
     primeSpeech();
     try {
@@ -271,7 +301,7 @@ export default function Shell({
             onKey={() => setSetup({})}
             onRemoveKey={async () => { await GeminiKey.clear(); setGeminiKey(''); }}
             adminUrl={`${apiBase() ?? ''}/admin`}
-            updater={updater}
+            onAssist={toggleAssist} assistMsg={assistMsg}
           />
         )}
       </div>
@@ -285,7 +315,12 @@ export default function Shell({
         ))}
       </nav>
 
-      {snap.active && <Player engine={engine} snap={snap} />}
+      {snap.active && (
+        <Player
+          engine={engine} snap={snap}
+          voice={settings.assist ? { assistant, state: voiceState, holdMs: settings.holdMs, wakeLabel: settings.wake === 'custom' ? settings.wakeCustom || WAKE_PRESETS.exam.label : WAKE_PRESETS[settings.wake].label } : null}
+        />
+      )}
       {setup && (
         <GeminiSetup
           message={setup.message} replacing={!!geminiKey}

@@ -6,7 +6,7 @@ const KEY = 'gemini_key';
 
 /** Strips spaces and quotes people accidentally copy along with the key. */
 export const cleanKey = (s: string) => s.trim().replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, '');
-export const looksLikeKey = (s: string) => /^[A-Za-z0-9._\-]{20,250}$/.test(s);
+export const looksLikeKey = (s: string) => /^[A-Za-z0-9_\-]{20,200}$/.test(s);
 export const maskKey = (k: string) => (k.length > 10 ? `${k.slice(0, 4)}••••••${k.slice(-4)}` : '••••••');
 
 export const GeminiKey = {

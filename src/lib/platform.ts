@@ -1,14 +1,22 @@
 import type { Speech } from './engine';
 
 /* ---------- Speech ---------- */
-export const speechSupported = () => typeof window !== 'undefined' && 'speechSynthesis' in window;
+/** The phone's language as a clean BCP-47 tag ("en-US"), whatever odd value the system reports. */
+export function deviceLang(raw = typeof navigator !== 'undefined' ? navigator.language : ''): string {
+  const t = String(raw || '').replace(/[@.].*$/, '').replace(/_/g, '-');
+  return /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(t) ? t : 'en-US';
+}
+export const isNative = () => typeof window !== 'undefined' && !!(window as any).Capacitor?.isNativePlatform?.();
+const hasWebSpeech = () => typeof window !== 'undefined' && 'speechSynthesis' in window;
+/** The Android app's web view has no browser speech; there it uses Android's own text-to-speech through a plugin. */
+export const speechSupported = () => isNative() || hasWebSpeech();
 
 let keepRef: SpeechSynthesisUtterance | null = null; // Chrome can garbage-collect a playing utterance and drop onend
 
 export function createWebSpeech(): Speech {
   return {
     speak(text, { rate, voiceURI }, h) {
-      if (!speechSupported()) {
+      if (!hasWebSpeech()) {
         h.onerror('unsupported');
         return;
       }
@@ -29,7 +37,7 @@ export function createWebSpeech(): Speech {
       synth.speak(u);
     },
     cancel() {
-      if (speechSupported()) window.speechSynthesis.cancel();
+      if (hasWebSpeech()) window.speechSynthesis.cancel();
     },
     prime() {
       try {
@@ -43,11 +51,60 @@ export function createWebSpeech(): Speech {
   };
 }
 
+/* ---- Android: system text-to-speech via @capacitor-community/text-to-speech ---- */
+export interface NativeTTS {
+  speak(o: { text: string; lang: string; rate: number; pitch: number; volume: number; queueStrategy: number }): Promise<void>;
+  stop(): Promise<void>;
+  isLanguageSupported(o: { lang: string }): Promise<{ supported: boolean }>;
+}
+
+export function createNativeSpeech(load: () => Promise<NativeTTS | null>, preferred: string[]): Speech {
+  let lang: Promise<string> | null = null;
+  const pick = (T: NativeTTS) =>
+    (lang ??= (async () => {
+      for (const l of preferred) {
+        try { if ((await T.isLanguageSupported({ lang: l })).supported) return l; } catch { /* try the next */ }
+      }
+      return preferred[preferred.length - 1];
+    })());
+  return {
+    speak(text, { rate }, h) {
+      void (async () => {
+        const T = await load();
+        if (!T) return h.onerror('unsupported');
+        const l = await pick(T);
+        h.onstart(); // the plugin has no "started" event
+        try {
+          await T.speak({ text, lang: l, rate: Math.min(2, Math.max(0.1, rate)), pitch: 1, volume: 1, queueStrategy: 0 /* flush: replace what is playing */ });
+          h.onend();
+        } catch (e) {
+          const m = String((e as any)?.message ?? e);
+          h.onerror(/not.*(available|supported|installed)|unavailable|not initiali|no .*engine/i.test(m) ? 'unsupported' : m || 'error');
+        }
+      })();
+    },
+    cancel() { void load().then((T) => T?.stop()).catch(() => undefined); },
+    prime() { void load(); },
+  };
+}
+
+const loadNativeTTS = (() => {
+  let p: Promise<NativeTTS | null> | null = null;
+  return () => (p ??= import('@capacitor-community/text-to-speech').then((m) => m.TextToSpeech as unknown as NativeTTS).catch(() => null));
+})();
+
+/** The right speech engine for where the app is running. */
+export function createSpeech(): Speech {
+  if (!isNative()) return createWebSpeech();
+  const nav = deviceLang();
+  return createNativeSpeech(loadNativeTTS, [...new Set([nav, nav.split('-')[0], 'en-US'])]);
+}
+
 export interface VoiceOption { uri: string; label: string }
 
 /** Installed voices, with the phone's language first. Calls back again if the list loads late. */
 export function watchVoices(cb: (v: VoiceOption[]) => void): () => void {
-  if (!speechSupported()) return () => {};
+  if (!hasWebSpeech()) return () => {}; // the Android app uses the phone's own voice and has no list to show
   const synth = window.speechSynthesis;
   const load = () => {
     const all = synth.getVoices();
@@ -132,6 +189,8 @@ export interface MediaHandlers {
   next(): void;
   back(): void;
   repeat(): void;
+  /** Optional: return true if the gesture was used to ask a question. */
+  ask?(): boolean;
 }
 
 export function bindMediaSession(h: MediaHandlers): () => void {
@@ -145,6 +204,7 @@ export function bindMediaSession(h: MediaHandlers): () => void {
     seekforward: () => h.next(),
     seekbackward: () => h.back(),
     previoustrack: () => {
+      if (h.ask?.()) return;
       const t = Date.now();
       if (t - lastPrev < 1500) h.back();
       else h.repeat();
@@ -187,4 +247,4 @@ export function setMediaInfo(title: string, album: string, playing: boolean | nu
 }
 
 /** Unlocks speech on mobile; call from a tap before speaking later. */
-export const primeSpeech = () => createWebSpeech().prime?.();
+export const primeSpeech = () => createSpeech().prime?.();

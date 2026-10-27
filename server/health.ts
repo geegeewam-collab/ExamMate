@@ -1,5 +1,4 @@
 import type { Store } from './license';
-import { releasesRepo } from './update';
 
 type Env = Record<string, string | undefined>;
 
@@ -19,7 +18,6 @@ export async function health(store: Store, env: Env = process.env) {
   if (!url) hints.push('UPSTASH_REDIS_REST_URL is not set (the database address).');
   else if (!/^https:\/\//.test(url)) hints.push('UPSTASH_REDIS_REST_URL must start with https://. You probably pasted the redis:// connection string. Use the REST URL.');
   if (!token) hints.push('UPSTASH_REDIS_REST_TOKEN is not set (the database token).');
-  if (!releasesRepo(env)) hints.push('Update notifications are off. Set RELEASES_REPO to owner/repo (the GitHub repo that holds your ExamMate.apk releases) in Vercel, then redeploy.');
 
   let database = 'not checked';
   if (url && token) {
@@ -50,7 +48,6 @@ export async function health(store: Store, env: Env = process.env) {
       UPSTASH_REDIS_REST_URL: !!url,
       UPSTASH_REDIS_REST_TOKEN: !!token,
     },
-    updates: releasesRepo(env) ? 'on' : 'off',
     database,
     hints,
   };

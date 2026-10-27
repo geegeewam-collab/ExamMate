@@ -98,16 +98,6 @@ The APK itself can be public: it is useless without a license key you issued.
 
 **Keep the code private but the download public:** create a second, empty **public** repo (e.g. `exammate-downloads`). In your code repo add the variable `RELEASES_REPO` = `yourname/exammate-downloads` and a secret `RELEASES_TOKEN` (a fine-grained personal access token with **Contents: read and write** on that repo). Then in Vercel set `NEXT_PUBLIC_APK_URL` to `https://github.com/yourname/exammate-downloads/releases/latest/download/ExamMate.apk`.
 
-#### Update notifications (how students get new versions)
-The app checks for a new version when it opens, when it comes back to the front (at most every 30 minutes), and every 6 hours while it stays open. If your newest release is higher than the installed one, it shows **Exam Mate Update Available** with **Update Now** and **Later**. Update Now downloads `ExamMate.apk` in the phone's browser; the student taps it to install, and it installs **over** the old app, keeping the license, settings and history (same app ID and same signing key). **Later** hides it for a day, and a newer version prompts again straight away. Settings > About has a **Check for updates** button. The prompt never appears while an answer is being read or a photo is being processed.
-
-To make it work:
-1. In Vercel, set `RELEASES_REPO` to `owner/repo` of the repo that holds your releases (skip it only if the releases are in the same repo Vercel deploys from), then redeploy. `/api/health` shows `updates: "on"` once it is set.
-2. Tag every release with **three numbers**: `v1.0.1`, `v1.1.0`, `v2.0.0`. The workflow refuses tags like `v1.0` or `v1.0.1-beta`, because the app could not compare them.
-3. Check the first build you install: **Settings > About** should show the version. If there is no About section, the version was not baked into that build and it will not check for updates.
-
-**One limit to know:** only builds that contain this feature can notify. A phone still running an older version (without Settings > About) has no update code inside it, so it will never be told. Those students must install the first update-capable version once by hand (send them the `/download` link). From that install onward, every later release notifies them automatically.
-
 ### 3. Google Play (later, optional)
 Not needed to start. Google is rolling out "developer verification" for apps installed outside the Play Store: enforcement began on 30 Sep 2026 in Brazil, Indonesia, Singapore and Thailand, and Google says it expands worldwide in 2027. When it reaches your buyers, unverified APKs will need extra install steps. Registering as an Android developer (one-time fee of about $25) before then avoids that. Check Google's current rules at that time.
 
@@ -125,8 +115,27 @@ Send the `/download` link and the license key as **two separate messages**, so t
 - The key is stored only on the student's phone. For each photo it is sent through your server to Google and is never saved on the server.
 - If a student sees a limit message, their free allowance is used up for a while. Free limits are set by Google and have been tightened before.
 
+## Voice assistant (ask questions while reading)
+
+Turn it on in **Settings > Voice assistant**. While a reading session is open you can:
+
+- say the **wake phrase** (default "Hey Exam Mate", or "Hey Reader", "Hello Mate", or your own), then your question. A ding plays, the reader **pauses**, the question is answered out loud, and it **carries on from the phrase it was on**.
+- say it all in one go: "Hey Exam Mate, what does that mean?"
+- say a command instead of a question: "next", "repeat", "go back", "pause", "continue", "slow down", "faster", "stop". These run instantly and cost nothing.
+- use the **ask button** on the reading screen (tap, hold 1 s, or hold 3 s, your choice. Holding gives a ding and a buzz).
+- optionally, **triple-press your earbuds** (needs earbuds that send "previous track" for three presses).
+
+Notes:
+- Holding an earbud for 3 seconds **cannot** be detected by any app. The phone keeps that for its own assistant. That is why the on-screen hold, the wake phrase and the triple-press exist.
+- It only listens while a reading session is open and the app is on screen. It stops when you lock the screen. Earbuds work best, otherwise the phone's speaker can confuse it.
+- It uses the phone's speech recognition (Google on Android), which may send audio to Google. The setting is off until the student turns it on.
+- Questions use the same Gemini key as photos: students use their own, you use the server's. Answers are saved in History.
+
+## Reading aloud on Android
+The Android app does not have the browser's speech feature, so it uses the phone's own **Text-to-speech** engine (through the `@capacitor-community/text-to-speech` plugin). It goes to your earbuds like any other sound. If the app says **"No speech voice found"**, open the phone's **Settings > Text-to-speech output**, choose or install an engine (Google Speech Services is the usual one), then press Resume.
+
 ## Tests
-`npm test` runs the reading engine, text splitting, and the server tests (licenses, device binding, forged tokens, owner sign-in, student keys, brute force). `npm run typecheck` checks types.
+`npm test` runs the reading engine, text splitting, native speech, the voice assistant (wake phrase, commands, interrupt and resume), and the server tests (licenses, device binding, forged tokens, owner sign-in, student keys, brute force). `npm run typecheck` checks types.
 
 ## If something goes wrong
 - **Admin sign-in says "Request failed" or "The server hit a problem"**: open `/api/health` on your site. The usual cause is the database settings: `UPSTASH_REDIS_REST_URL` must be the **REST URL** (starts with `https://`) and `UPSTASH_REDIS_REST_TOKEN` the **REST Token**, each enabled for Production, then **Redeploy**. Use your main address (`exam-mate-one.vercel.app`), not a long one-off deployment address, because variables can differ per environment.

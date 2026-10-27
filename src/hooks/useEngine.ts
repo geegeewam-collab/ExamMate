@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useSyncExternalStore } from 'react';
 import { ReaderEngine, realClock, type EngineOptions, type Snapshot } from '../lib/engine';
-import { createWebSpeech } from '../lib/platform';
+import { createSpeech } from '../lib/platform';
 import type { Settings } from '../lib/settings';
 
 const toOptions = (s: Settings): EngineOptions => ({
@@ -10,7 +10,7 @@ const toOptions = (s: Settings): EngineOptions => ({
 
 export function useEngine(settings: Settings): [ReaderEngine, Snapshot] {
   const ref = useRef<ReaderEngine | null>(null);
-  if (!ref.current) ref.current = new ReaderEngine(createWebSpeech(), realClock, toOptions(settings));
+  if (!ref.current) ref.current = new ReaderEngine(createSpeech(), realClock, toOptions(settings));
   const engine = ref.current;
 
   useEffect(() => {

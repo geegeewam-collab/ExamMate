@@ -61,6 +61,8 @@ export interface Snapshot {
   hint: string;
 }
 
+export const NO_VOICE = 'No speech voice found on this device. In your phone settings, open Text-to-speech and choose or install an engine, then press Resume.';
+
 const EMPTY: Snapshot = {
   active: false,
   state: 'idle',
@@ -204,6 +206,11 @@ export class ReaderEngine {
       },
       onerror: (e) => {
         if (my !== this.session || e === 'interrupted' || e === 'canceled') return;
+        if (e === 'unsupported') {
+          this.halt();
+          this.set({ state: 'paused', phase: 'listen', gapMs: 0, gapEndsAt: 0, hint: NO_VOICE });
+          return;
+        }
         this.timer = this.clock.setTimeout(() => {
           if (my === this.session) this.run(i + 1);
         }, 400);

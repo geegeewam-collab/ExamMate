@@ -14,7 +14,7 @@ export default function GeminiSetup({
   async function save() {
     const k = cleanKey(value);
     if (!looksLikeKey(k)) {
-      setError("That doesn't look like a Gemini API key. Copy the complete key from Google AI Studio, without spaces or quotation marks.");
+      setError("That doesn't look like a Gemini key. It is one long line of letters and numbers, usually starting with AIza.");
       return;
     }
     setBusy(true);
@@ -53,7 +53,7 @@ export default function GeminiSetup({
             </li>
             <li>
               <span className="step-num">3</span>
-              <div><b>Copy the complete key and paste it below</b><p>New keys may start with &ldquo;AQ.&rdquo; and older keys may start with &ldquo;AIza&rdquo;.</p></div>
+              <div><b>Copy the key and paste it below</b><p>It usually starts with &ldquo;AIza&rdquo;.</p></div>
             </li>
           </ol>
 

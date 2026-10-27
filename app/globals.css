@@ -264,7 +264,6 @@ input[type='range']::-moz-range-thumb { width: 26px; height: 26px; border-radius
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 @keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
-@keyframes fade-in { from { opacity: 0; } }
 @keyframes sheet-in { from { opacity: 0; transform: translateY(18px) scale(0.99); } }
 
 @media (prefers-reduced-motion: reduce) {
@@ -305,22 +304,24 @@ button.link { background: none; border: 0; padding: 8px; font: inherit; font-siz
 .dl .steps { margin: 6px 0 2px; }
 .dl .btn { text-decoration: none; }
 
-/* ---------- update dialog (above the reading sheet and the Gemini guide) ---------- */
-.modal {
-  position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; overflow-y: auto; overscroll-behavior: contain;
-  padding: calc(env(safe-area-inset-top, 0px) + 18px) 18px calc(env(safe-area-inset-bottom, 0px) + 18px);
-  background: rgba(6, 12, 9, 0.5); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-  animation: fade-in 0.2s ease-out;
-}
-.modal-card {
-  width: min(100%, 400px); padding: 26px 22px 18px; display: flex; flex-direction: column; gap: 12px; text-align: center; align-items: stretch;
-  border-radius: 30px; background: var(--glass-solid); animation: sheet-in 0.32s cubic-bezier(0.2, 0.9, 0.3, 1);
-}
-.modal-card h2 { font-size: 24px; line-height: 1.15; font-weight: 700; letter-spacing: -0.03em; }
-.modal-card .sub { margin: -2px auto 0; font-size: 15.5px; }
-.modal-card .ver { font-size: 15px; font-weight: 600; color: var(--accent); }
-.modal-card .ver span { font-weight: 500; color: var(--text2); }
-.modal-card .fine { line-height: 1.45; }
-.modal-card .link { padding: 8px; }
-.item .upd-status { font-size: 14px; color: var(--text2); }
-.item .upd-status.warn { color: var(--danger); }
+/* ---------- voice assistant ---------- */
+.hint { font-size: 13px; color: var(--text2); }
+.voice-dock, .voice-row { width: 100%; }
+.voice-row { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 10px; padding: 6px 0; min-height: 52px; }
+.voice-chip { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 17px; background: var(--fill); font-size: 14px; font-weight: 600; color: var(--text2); }
+.voice-chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 var(--glow); animation: pulse 1.8s ease-out infinite; }
+.voice-msg { font-size: 14px; font-weight: 600; color: var(--text2); }
+.hold-btn { position: relative; overflow: hidden; display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 18px; border-radius: 23px; border: 1px solid var(--stroke); background: var(--glass); color: var(--accent); font-size: 15px; font-weight: 600; box-shadow: var(--shadow); touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.hold-btn > span, .hold-btn > svg { position: relative; z-index: 1; }
+.hold-fill { position: absolute; inset: 0; transform-origin: left center; transform: scaleX(0); background: var(--accent-soft); }
+.hold-btn.on .hold-fill { animation: holdfill var(--hold) linear forwards; }
+.hold-btn.on { border-color: var(--accent); }
+.voice-card { padding: 14px 16px; border-radius: 22px; margin: 4px 0 8px; }
+.voice-state { display: flex; align-items: center; gap: 10px; color: var(--accent); }
+.voice-state b { flex: 1; font-size: 16px; }
+.voice-state.listening svg { animation: pulse-scale 1.1s ease-in-out infinite; }
+.voice-q { margin-top: 8px; font-size: 16px; font-weight: 600; line-height: 1.35; }
+.voice-a { margin-top: 6px; font-size: 15px; color: var(--text2); line-height: 1.4; max-height: 6.5em; overflow-y: auto; }
+@keyframes holdfill { to { transform: scaleX(1); } }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--glow); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes pulse-scale { 50% { transform: scale(1.18); } }

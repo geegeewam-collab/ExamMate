@@ -8,11 +8,9 @@ const FROM_ENV = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
  */
 export function apiBase(): string | null {
   if (FROM_ENV) return FROM_ENV;
-  return isNativeApp() ? null : '';
+  const native = typeof window !== 'undefined' && !!(window as any).Capacitor?.isNativePlatform?.();
+  return native ? null : '';
 }
-
-/** True inside the installed Android app, false in a browser. */
-export const isNativeApp = (): boolean => typeof window !== 'undefined' && !!(window as any).Capacitor?.isNativePlatform?.();
 
 // Optional: where students go to get a license (a WhatsApp link, website, mailto:...).
 export const SUPPORT_URL = process.env.NEXT_PUBLIC_SUPPORT_URL || '';

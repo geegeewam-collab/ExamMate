@@ -2,9 +2,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { ReaderEngine, Snapshot } from '../lib/engine';
 import { useCountdown } from '../hooks/useEngine';
+import VoiceDock, { type VoiceProps } from './VoiceDock';
 import { Icon } from './ui';
 
-export default function Player({ engine, snap }: { engine: ReaderEngine; snap: Snapshot }) {
+export default function Player({ engine, snap, voice }: { engine: ReaderEngine; snap: Snapshot; voice?: VoiceProps | null }) {
   const [write, setWrite] = useState(false);
   const left = useCountdown(snap.gapEndsAt);
   const activeRef = useRef<HTMLButtonElement | null>(null);
@@ -21,11 +22,12 @@ export default function Player({ engine, snap }: { engine: ReaderEngine; snap: S
   const status =
     snap.state === 'counting' ? `Starting in ${snap.countdown}…`
     : snap.finished ? `${total} phrases read`
-    : snap.phase === 'tap' ? 'Tap anywhere to continue'
+    : snap.hint ? snap.hint
     : snap.state === 'paused' ? 'Paused'
-    : snap.hint;
+    : snap.phase === 'tap' ? 'Tap anywhere to continue'
+    : '';
 
-  const label = snap.finished ? 'Done' : snap.phase === 'write' ? 'Write' : snap.phase === 'tap' ? 'Your turn' : snap.state === 'paused' ? 'Paused' : 'Listen';
+  const label = snap.finished ? 'Done' : snap.state === 'paused' ? 'Paused' : snap.phase === 'write' ? 'Write' : snap.phase === 'tap' ? 'Your turn' : 'Listen';
   const lines = snap.lines.map((t, li) => ({ t, li })).filter((x) => snap.lineOf.includes(x.li));
 
   return (
@@ -82,6 +84,8 @@ export default function Player({ engine, snap }: { engine: ReaderEngine; snap: S
           </>
         )}
       </div>
+
+      {voice && <VoiceDock {...voice} />}
 
       <div className="sheet-controls">
         <button className="ctl" aria-label="Previous phrase" onClick={() => engine.back()}><Icon name="prev" size={26} /></button>

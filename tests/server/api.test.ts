@@ -171,7 +171,6 @@ test('a student cannot turn a license token into an owner token', async () => {
 
 /* ---------------- /api/answer ---------------- */
 const STUDENT_KEY = 'AIzaStudentOwnKey_1234567890abcdef';
-const STUDENT_AUTH_KEY = 'AQ.Ab8RN6JExampleKey1234567890abcdef';
 const fakeGemini = (status = 200, answer = 'Four') => {
   const calls: { url: string; key: string | null }[] = [];
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -207,14 +206,6 @@ test('answer: a student must bring their own Gemini key', async () => {
   assert.equal((await r.json()).code, 'need_key');
   assert.equal((await handleAnswer(ans({ ...h, 'x-gemini-key': 'short' }), st)).status, 400);
   assert.equal(calls.length, 0, 'nothing was sent to Google');
-});
-
-test('answer: a new AQ. authorization key passes input validation and is forwarded to Google', async () => {
-  const { st, h } = await activated();
-  const calls = fakeGemini(200, 'Four');
-  const r = await handleAnswer(ans({ ...h, 'x-gemini-key': STUDENT_AUTH_KEY }), st);
-  assert.equal(r.status, 200);
-  assert.ok(calls.length >= 2 && calls.every((c) => c.key === STUDENT_AUTH_KEY));
 });
 
 test('answer: student key is used for Google and the server key is never used or leaked', async () => {
@@ -268,4 +259,72 @@ test('answer: oversized request and burst limit', async () => {
   assert.equal((await handleAnswer(big, st)).status, 413);
   for (let i = 0; i < 12; i++) assert.equal((await handleAnswer(ans(withKey(h)), st)).status, 200);
   assert.equal((await handleAnswer(ans(withKey(h)), st)).status, 429, 'the 13th in 10 minutes is refused');
+});
+
+/* ---------------- /api/ask (voice questions) ---------------- */
+import { handleAsk, cleanSpoken } from '../../server/ask';
+
+const fakeAsk = (status = 200, text = 'Photosynthesis is how plants make food from light.') => {
+  const seen: { body: string; key: string | null }[] = [];
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes('/models?')) return new Response(JSON.stringify({ models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }] }));
+    seen.push({ body: String(init?.body), key: new Headers(init?.headers).get('x-goog-api-key') });
+    if (status !== 200) return new Response(JSON.stringify({ error: { message: status === 400 ? 'API key not valid.' : 'boom' } }), { status });
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }));
+  }) as typeof fetch;
+  return seen;
+};
+const ask = (h: Record<string, string>, body: unknown) => post('/api/ask', body, h);
+
+test('ask: needs a license and, for students, their own Gemini key', async () => {
+  const { st, h } = await activated();
+  const seen = fakeAsk();
+  assert.equal((await handleAsk(ask({}, { question: 'what is mitosis' }), st)).status, 401);
+  const r = await handleAsk(ask(h, { question: 'what is mitosis' }), st);
+  assert.equal(r.status, 400);
+  assert.equal((await r.json()).code, 'need_key');
+  assert.equal(seen.length, 0);
+});
+
+test('ask: answers a spoken question using the student key, with the answers as context', async () => {
+  const { st, h } = await activated();
+  const seen = fakeAsk();
+  const r = await handleAsk(ask(withKey(h), { question: 'what does that mean', context: 'Question 1. Mitosis is cell division.', current: 'Mitosis is' }), st);
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).answer, 'Photosynthesis is how plants make food from light.');
+  assert.ok(seen.length === 1 && seen[0].key === STUDENT_KEY);
+  assert.match(seen[0].body, /Mitosis is cell division/);
+  assert.match(seen[0].body, /Student asked: what does that mean/);
+});
+
+test('ask: owner uses the server key', async () => {
+  const st = memoryStore();
+  const { token } = await (await handleOwner(ownerReq('correct horse battery'), st)).json();
+  const seen = fakeAsk();
+  const r = await handleAsk(ask({ 'x-license-token': token, 'x-device-id': 'owner-phone-001' }, { question: 'why is the sky blue' }), st);
+  assert.equal(r.status, 200);
+  assert.equal(seen[0].key, 'fake-gemini');
+});
+
+test('ask: rejects empty questions, cleans markdown, maps Google errors', async () => {
+  const { st, h } = await activated();
+  fakeAsk();
+  assert.equal((await handleAsk(ask(withKey(h), { question: ' ' }), st)).status, 400);
+  assert.equal(cleanSpoken('**Bold** and `code`\n\n# Title'), 'Bold and code Title');
+  fakeAsk(200, '**Four** is the answer.\n- really');
+  assert.equal((await (await handleAsk(ask(withKey(h), { question: 'two plus two' }), st)).json()).answer, 'Four is the answer. - really');
+  fakeAsk(400);
+  const bad = await handleAsk(ask(withKey(h), { question: 'two plus two' }), st);
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).code, 'student_key');
+  fakeAsk(429);
+  assert.equal((await (await handleAsk(ask(withKey(h), { question: 'two plus two' }), st)).json()).code, 'student_limit');
+});
+
+test('ask: burst limit protects the server', async () => {
+  const { st, h } = await activated();
+  fakeAsk();
+  for (let i = 0; i < 40; i++) assert.equal((await handleAsk(ask(withKey(h), { question: 'hello there' }), st)).status, 200);
+  assert.equal((await handleAsk(ask(withKey(h), { question: 'hello there' }), st)).status, 429);
 });

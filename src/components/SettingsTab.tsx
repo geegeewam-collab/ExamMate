@@ -1,19 +1,20 @@
 'use client';
 import { PRESETS, type Settings } from '../lib/settings';
+import { WAKE_PRESETS } from '../lib/voice/wake';
 import type { VoiceOption } from '../lib/platform';
-import type { Updater } from '../hooks/useUpdater';
-import { installedVersion } from '../services/update-service';
 import { Icon, Range, Segmented, Switch } from './ui';
 
 const same = (s: Settings, p: Partial<Settings>) => (Object.keys(p) as (keyof Settings)[]).every((k) => s[k] === p[k]);
 
 export default function SettingsTab({
-  s, set, voices, speech, owner, keyMask, onKey, onRemoveKey, adminUrl, updater,
+  s, set, voices, speech, owner, keyMask, onKey, onRemoveKey, adminUrl, onAssist, assistMsg,
 }: {
   s: Settings; set(p: Partial<Settings>): void; voices: VoiceOption[]; speech: boolean;
-  owner: boolean | null; keyMask: string; onKey(): void; onRemoveKey(): void; adminUrl: string; updater: Updater;
+  owner: boolean | null; keyMask: string; onKey(): void; onRemoveKey(): void; adminUrl: string;
+  /** Turns the voice assistant on/off. Resolves with an error message to show, or '' on success. */
+  onAssist(on: boolean): Promise<string>;
+  assistMsg: string;
 }) {
-  const { manual } = updater.snap;
   const preset = (['notes', 'careful', 'normal'] as const).find((k) => same(s, PRESETS[k])) ?? 'custom';
   return (
     <>
@@ -73,6 +74,59 @@ export default function SettingsTab({
         <div className="item"><span>Read as soon as answers are ready</span><Switch label="Read as soon as answers are ready" checked={s.auto} onChange={(auto) => set({ auto })} /></div>
       </div>
 
+      <div className="section-label">Voice assistant</div>
+      <div className="list glass">
+        <div className="item">
+          <span>Ask questions by voice</span>
+          <Switch label="Ask questions by voice" checked={s.assist} onChange={(on) => void onAssist(on)} />
+        </div>
+        {s.assist && (
+          <>
+            <div className="item">
+              <span>Listen for the wake phrase</span>
+              <Switch label="Listen for the wake phrase" checked={s.wakeListen} onChange={(wakeListen) => set({ wakeListen })} />
+            </div>
+            {s.wakeListen && (
+              <label className="item">
+                <span>Wake phrase</span>
+                <select value={s.wake} onChange={(e) => set({ wake: e.target.value as Settings['wake'] })}>
+                  {Object.entries(WAKE_PRESETS).map(([id, p]) => <option key={id} value={id}>{p.label}</option>)}
+                  <option value="custom">Your own phrase</option>
+                </select>
+              </label>
+            )}
+            {s.wakeListen && s.wake === 'custom' && (
+              <div className="item col">
+                <input className="field" value={s.wakeCustom} placeholder="e.g. study buddy" aria-label="Your wake phrase" maxLength={40}
+                  onChange={(e) => set({ wakeCustom: e.target.value })} />
+                <span className="hint">At least 6 letters, so it does not trigger by accident.</span>
+              </div>
+            )}
+            <div className="item col">
+              <span>On-screen ask button</span>
+              <Segmented<number> label="On-screen ask button" value={s.holdMs}
+                options={[{ value: 0, label: 'Tap' }, { value: 1000, label: 'Hold 1 s' }, { value: 3000, label: 'Hold 3 s' }]}
+                onChange={(holdMs) => set({ holdMs: holdMs as Settings['holdMs'] })} />
+            </div>
+            <div className="item">
+              <span>Earbuds: triple-press asks</span>
+              <Switch label="Earbuds: triple-press asks" checked={s.earbudAsk} onChange={(earbudAsk) => set({ earbudAsk })} />
+            </div>
+          </>
+        )}
+      </div>
+      {assistMsg && <p className="foot warn" role="alert">{assistMsg}</p>}
+      <p className="foot">
+        While you are reading, say the wake phrase (or use the ask button), then your question. Exam Mate pauses, answers out loud,
+        and carries on where it stopped. You can also say &ldquo;next&rdquo;, &ldquo;repeat&rdquo;, &ldquo;go back&rdquo;, &ldquo;pause&rdquo;,
+        &ldquo;continue&rdquo;, &ldquo;slow down&rdquo; or &ldquo;stop&rdquo;. It works best with earbuds.
+      </p>
+      <p className="foot">
+        Listening uses your phone&rsquo;s speech recognition, which may send audio to Google, and only runs while a reading session is open
+        and Exam Mate is on screen. Apps cannot detect a long-press on earbuds (the phone keeps that for its own assistant), so use the wake
+        phrase, the ask button, or the triple-press option, which needs earbuds that send &ldquo;previous track&rdquo; for three presses.
+      </p>
+
       <div className="section-label">AI</div>
       <div className="list glass">
         {owner ? (
@@ -100,24 +154,7 @@ export default function SettingsTab({
           </div>
         )}
       </div>
-      {updater.supported && (
-        <>
-          <div className="section-label">About</div>
-          <div className="list glass">
-            <div className="item"><span>Version</span><span className="val">{installedVersion()}</span></div>
-            <div className="item acts-row">
-              <button className="btn tinted sm" disabled={manual === 'checking'} onClick={() => void updater.checkNow()}>
-                <Icon name="download" size={16} /> {manual === 'checking' ? 'Checking…' : 'Check for updates'}
-              </button>
-              <span className={'upd-status' + (manual === 'failed' ? ' warn' : '')} role="status" aria-live="polite">
-                {manual === 'current' && 'You have the latest version.'}
-                {manual === 'failed' && "Couldn't check. Connect to the internet and try again."}
-              </span>
-            </div>
-          </div>
-        </>
-      )}
-      {!speech && <p className="foot warn">This device has no speech support, so reading aloud will not work.</p>}
+      {!speech && <p className="foot warn">This browser cannot read aloud. Open Exam Mate in Chrome, or use the Android app.</p>}
       <p className="foot">Earbuds: tap once to pause or resume. Next skips a phrase. Previous repeats it; press twice to go back one.</p>
     </>
   );
