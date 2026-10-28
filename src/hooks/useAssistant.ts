@@ -7,7 +7,7 @@ import { haptics } from '../lib/voice/haptics';
 import { createRecognizer, type Recognizer } from '../lib/voice/recognizer';
 import { tones } from '../lib/voice/tones';
 import { wakePhrase } from '../lib/voice/wake';
-import { askQuestion } from '../services/ask-service';
+import { askQuestion, warmServer } from '../services/ask-service';
 
 interface Args {
   settings: Settings;
@@ -50,12 +50,34 @@ export function useAssistant(a: Args): { assistant: VoiceAssistant; state: Assis
       faster: () => live.current.setRate(Math.min(1.2, live.current.settings.rate + 0.1)),
     },
     speak: (text) => new Promise<void>((resolve) => {
-      const safety = setTimeout(resolve, Math.max(6000, text.length * 110)); // never leave the reader stuck if speech fails silently
-      const done = () => { clearTimeout(safety); resolve(); };
-      speech.speak(text, { rate: 0.95, voiceURI: live.current.settings.voice }, { onstart: () => {}, onend: done, onerror: done });
+      let finished = false;
+      let started = false;
+      let retried = false;
+      let watch: ReturnType<typeof setTimeout> | undefined;
+      const total = setTimeout(() => done(), Math.max(6000, text.length * 110)); // never leave the reader stuck if speech fails silently
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(total);
+        clearTimeout(watch);
+        resolve();
+      };
+      const attempt = () => {
+        speech.speak(text, { rate: 0.95, voiceURI: live.current.settings.voice }, {
+          onstart: () => { started = true; clearTimeout(watch); },
+          onend: done,
+          onerror: (e) => { if (e !== 'interrupted' && e !== 'canceled') done(); },
+        });
+        // Browsers sometimes drop a phrase spoken right after a cancel. If it has not started, try once more.
+        watch = setTimeout(() => {
+          if (!started && !finished && !retried) { retried = true; speech.cancel(); attempt(); }
+        }, 1800);
+      };
+      attempt();
     }),
     cancelSpeech: () => speech.cancel(),
     ask: (q, ctx) => askQuestion(q, ctx),
+    warm: () => { void warmServer(); },
     context: () => live.current.getContext(),
     tones,
     haptics,
@@ -82,6 +104,11 @@ export function useAssistant(a: Args): { assistant: VoiceAssistant; state: Assis
     else void assistant.disable();
   }, [assistant, active, a.settings.wakeListen]);
   useEffect(() => () => { void assistant.disable(); }, [assistant]);
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => { void warmServer(); }, 4 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [active]);
 
   const state = useSyncExternalStore(assistant.subscribe, assistant.getSnapshot, assistant.getSnapshot);
   return { assistant, state };

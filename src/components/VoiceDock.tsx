@@ -53,21 +53,24 @@ export interface VoiceProps {
   state: AssistantSnapshot;
   holdMs: number;
   wakeLabel: string;
+  /** Show how long the server took (for the owner). */
+  showTiming?: boolean;
 }
 
 /** The hold-to-ask button, the "listening for…" hint, and the card that shows a question being answered. */
-export default function VoiceDock({ assistant, state, holdMs, wakeLabel }: VoiceProps) {
+export default function VoiceDock({ assistant, state, holdMs, wakeLabel, showTiming }: VoiceProps) {
   const busy = state.status === 'listening' || state.status === 'thinking' || state.status === 'speaking';
   if (busy) {
     return (
       <div className="voice-card glass" role="status" aria-live="polite">
         <div className={'voice-state ' + state.status}>
           <Icon name="mic" size={20} />
-          <b>{state.status === 'listening' ? 'Listening…' : state.status === 'thinking' ? 'Thinking…' : 'Answering'}</b>
+          <b>{state.status === 'listening' ? 'Listening…' : state.status === 'thinking' ? (state.slow ? 'Still thinking…' : 'Thinking…') : state.message && !state.answer ? 'One moment' : 'Answering'}</b>
           <button className="btn secondary sm" onClick={() => void assistant.cancel()}>Cancel</button>
         </div>
         {state.transcript && <p className="voice-q">&ldquo;{state.transcript}&rdquo;</p>}
         {state.status === 'speaking' && state.answer && <p className="voice-a">{state.answer}</p>}
+        {showTiming && state.ms > 0 && <p className="hint">Server answered in {(state.ms / 1000).toFixed(1)} s</p>}
       </div>
     );
   }

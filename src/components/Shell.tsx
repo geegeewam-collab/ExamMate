@@ -5,7 +5,7 @@ import { useAssistant } from '../hooks/useAssistant';
 import { createRecognizer } from '../lib/voice/recognizer';
 import { WAKE_PRESETS } from '../lib/voice/wake';
 import { kv } from '../lib/storage';
-import { wordCount } from '../lib/text';
+import { windowAround, wordCount } from '../lib/text';
 import { readTextFile } from '../lib/files';
 import {
   bindMediaSession, deviceLang, primeSpeech, setMediaInfo, speechSupported, startKeepAlive, stopKeepAlive, unwake, wake,
@@ -63,7 +63,10 @@ export default function Shell({
 
   const { assistant, state: voiceState } = useAssistant({
     settings, engine, snap,
-    getContext: () => ({ context: lastText.current.slice(0, 6000), current: live.current.snap.phrases[live.current.snap.idx] ?? '' }),
+    getContext: () => {
+      const cur = live.current.snap.phrases[live.current.snap.idx] ?? '';
+      return { context: windowAround(lastText.current, cur, 3500), current: cur };
+    },
     setRate: (rate) => update({ rate }),
     onAnswered: (q, a) =>
       setHistory((h) => {
@@ -318,7 +321,7 @@ export default function Shell({
       {snap.active && (
         <Player
           engine={engine} snap={snap}
-          voice={settings.assist ? { assistant, state: voiceState, holdMs: settings.holdMs, wakeLabel: settings.wake === 'custom' ? settings.wakeCustom || WAKE_PRESETS.exam.label : WAKE_PRESETS[settings.wake].label } : null}
+          voice={settings.assist ? { assistant, state: voiceState, holdMs: settings.holdMs, wakeLabel: settings.wake === 'custom' ? settings.wakeCustom || WAKE_PRESETS.exam.label : WAKE_PRESETS[settings.wake].label, showTiming: owner === true } : null}
         />
       )}
       {setup && (

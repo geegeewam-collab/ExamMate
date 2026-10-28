@@ -58,7 +58,7 @@ export default function Player({ engine, snap, voice }: { engine: ReaderEngine; 
         ) : (
           <>
             <div className="eyebrow">{label}</div>
-            <p className="phrase" key={snap.finished ? 'done' : snap.idx}>
+            <p className={'phrase' + (phrase.length > 150 ? ' xl' : phrase.length > 70 ? ' lg' : '')} key={snap.finished ? 'done' : snap.idx}>
               {snap.state === 'counting' ? `Starting in ${snap.countdown}…` : snap.finished ? 'Finished.' : <mark>{phrase}</mark>}
             </p>
             <div className="gapbar" aria-hidden="true">

@@ -28,11 +28,12 @@ Students never see an owner option. After the first activation the app does not 
 
 1. Run `npm install` once on your computer (it adds `@upstash/redis` and refreshes `package-lock.json`), then **push to GitHub**. Your existing Vercel project `exam-mate-one` redeploys automatically.
 2. In Vercel, open the project: **Settings > Build and Development**. If **Output Directory** shows an override such as `out`, clear it (leave the default). The website is now a normal Next.js build.
-3. **Database (free).** Go to https://upstash.com, create a **Redis** database on the **Free** plan (no card needed; check their pricing page for the current limits) and copy its **REST URL** and **REST Token**. This app stores only license records and a few counters, so the free plan is plenty. If Vercel's Marketplace screen does not show a free option, ignore it and use upstash.com directly.
+3. **Database (free).** When you create it, pick the region **US East (N. Virginia)**: that is next to where Vercel runs your server, which keeps every request quick. Go to https://upstash.com, create a **Redis** database on the **Free** plan (no card needed; check their pricing page for the current limits) and copy its **REST URL** and **REST Token**. This app stores only license records and a few counters, so the free plan is plenty. If Vercel's Marketplace screen does not show a free option, ignore it and use upstash.com directly.
 4. **Settings > Environment Variables** (add all five, then redeploy):
    - `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`: the two values from step 3
    - `ADMIN_PASSWORD`: long and private. **This is your login. There is no sign-up.**
    - `TOKEN_SECRET`: run `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and paste the result.
+   - `GEMINI_ASK_MODEL` (optional): the model used for voice questions. Leave empty for the default fast one.
    - `GEMINI_API_KEY`: your own key from https://aistudio.google.com/apikey. Used only for your owner devices.
 5. **Check the setup:** open `https://exam-mate-one.vercel.app/api/health`. It should say `"ok": true` and `"database": "ok"`. If not, the `hints` list tells you in plain words what is missing. It never shows your secret values.
 6. Open `https://exam-mate-one.vercel.app/admin` and sign in with `ADMIN_PASSWORD`.
@@ -119,11 +120,12 @@ Send the `/download` link and the license key as **two separate messages**, so t
 
 Turn it on in **Settings > Voice assistant**. While a reading session is open you can:
 
-- say the **wake phrase** (default "Hey Exam Mate", or "Hey Reader", "Hello Mate", or your own), then your question. A ding plays, the reader **pauses**, the question is answered out loud, and it **carries on from the phrase it was on**.
+- say the **wake phrase** (default "Hey Exam Mate", or "Hey Reader", "Hello Mate", or your own), then keep talking. A ding plays, the reader **pauses**, it listens, then it answers out loud and **carries on from the phrase it was on**.
 - say it all in one go: "Hey Exam Mate, what does that mean?"
-- say a command instead of a question: "next", "repeat", "go back", "pause", "continue", "slow down", "faster", "stop". These run instantly and cost nothing.
 - use the **ask button** on the reading screen (tap, hold 1 s, or hold 3 s, your choice. Holding gives a ding and a buzz).
 - optionally, **triple-press your earbuds** (needs earbuds that send "previous track" for three presses).
+
+**You do not need to learn commands.** Whatever you say goes to the AI, which works out whether you want a question answered or the reader controlled, in your own words: "could you try going faster", "I didn't catch that", "hold on a sec", "skip ahead", "you're going too quick", "carry on", "that's enough". It can repeat, go back, skip ahead, pause, continue, stop, and speed up or slow down. If the internet is down, plain one-word commands (next, repeat, pause...) still work.
 
 Notes:
 - Holding an earbud for 3 seconds **cannot** be detected by any app. The phone keeps that for its own assistant. That is why the on-screen hold, the wake phrase and the triple-press exist.

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { matchWake, parseCommand, wakePhrase, normalize } from '../src/lib/voice/wake';
 import { createNativeRecognizer, createWebRecognizer, type Recognizer, type RecognizerHandlers } from '../src/lib/voice/recognizer';
-import { AskFailure, VoiceAssistant, type AssistantDeps, type ReaderControl } from '../src/lib/voice/assistant';
+import { AskFailure, VoiceAssistant, type AskResult, type AssistantDeps, type ReaderControl } from '../src/lib/voice/assistant';
 import { FakeClock } from './helpers';
 
 /* ------------------------------ wake phrase ------------------------------ */
@@ -60,12 +60,14 @@ class FakeRecognizer implements Recognizer {
   async requestPermission() { return true; }
   async start(h: RecognizerHandlers) { this.starts++; this.h = h; }
   async stop() { this.stops++; }
+  ready() { this.h?.onReady?.(); }
   say(text: string, final = false) { this.h?.onText(text, final); }
   end(reason: 'ended' | 'no-speech' | 'denied' | 'unavailable' | 'error' = 'ended') { const h = this.h; this.h = null; h?.onEnd(reason); }
 }
 
 const tick = () => new Promise<void>((r) => setImmediate(r));
 const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
+const ANSWER: AskResult = { action: 'none', answer: 'It is cell division.' };
 
 function setup(opts: { playing?: boolean; ask?: AssistantDeps['ask']; speak?: AssistantDeps['speak'] } = {}) {
   const clock = new FakeClock();
@@ -82,7 +84,8 @@ function setup(opts: { playing?: boolean; ask?: AssistantDeps['ask']; speak?: As
     recognizer: rec, reader, clock,
     speak: opts.speak ?? (async (t) => { log.push('speak:' + t); }),
     cancelSpeech: () => log.push('cancelSpeech'),
-    ask: opts.ask ?? (async (q) => { log.push('ask:' + q); return 'It is cell division.'; }),
+    ask: opts.ask ?? (async (q) => { log.push('ask:' + q); return ANSWER; }),
+    warm: () => log.push('warm'),
     context: () => ({ context: 'Question 1. Mitosis is cell division.', current: 'Mitosis is' }),
     tones: { ding: () => log.push('ding'), dong: () => log.push('dong'), error: () => log.push('errtone') },
     onAnswered: (q, a) => answered.push([q, a]),
@@ -100,47 +103,96 @@ test('assistant: wake phrase -> pauses the reader -> listens -> answers -> carri
 
   rec.say('hey exam mate'); await settle();
   assert.equal(a.getSnapshot().status, 'listening');
-  assert.deepEqual(log.slice(0, 3), ['ding', 'pause', 'cancelSpeech']);
+  assert.deepEqual(log.filter((l) => l !== 'warm').slice(0, 3), ['pause', 'cancelSpeech', 'ding'], 'paused, then "go ahead"');
+  assert.equal(rec.starts, 1, 'the same listening session is reused: no restart, no lost words');
 
   rec.say('what does mitosis mean'); await settle();
   assert.equal(a.getSnapshot().transcript, 'what does mitosis mean');
   clock.advance(1500); await settle();
 
-  assert.deepEqual(log.slice(3), ['ask:what does mitosis mean', 'speak:It is cell division.', 'dong', 'resume']);
+  assert.deepEqual(log.filter((l) => !['warm', 'pause', 'cancelSpeech', 'ding'].includes(l)), ['ask:what does mitosis mean', 'speak:It is cell division.', 'dong', 'resume']);
   assert.deepEqual(answered, [['what does mitosis mean', 'It is cell division.']]);
   assert.equal(a.getSnapshot().status, 'waiting');
   assert.equal(a.getSnapshot().answer, 'It is cell division.');
-  assert.ok(rec.starts >= 3, 'wake listening started again afterwards');
+  assert.equal(rec.starts, 2, 'wake listening started again afterwards');
 });
 
-test('assistant: question in the same breath as the wake phrase skips the extra listening step', async () => {
-  const { a, rec, log } = setup();
+test('assistant: the question follows the wake phrase in one breath, even across several partial results', async () => {
+  const { a, rec, clock, log } = setup();
   await a.enable({ wake: true });
-  const before = rec.starts;
+  rec.say('hey exam mate what'); await settle();
+  rec.say('hey exam mate what is'); await settle();
   rec.say('hey exam mate what is mitosis'); await settle();
-  assert.equal(rec.starts - before, 1, 'only the wake loop restart, no separate capture session');
-  assert.ok(log.includes('ask:what is mitosis') && log.includes('resume'));
+  assert.ok(!log.some((l) => l.startsWith('ask:')), 'it waits for the person to finish instead of asking with half a sentence');
+  clock.advance(1500); await settle();
+  assert.ok(log.includes('ask:what is mitosis'));
+  assert.equal(rec.starts, 2, 'one wake session + one restart afterwards');
 });
 
-test('assistant: spoken commands run locally, with no AI call', async () => {
-  for (const [said, expected] of [['next', ['next']], ['repeat that', ['repeat']], ['go back', ['back']], ['stop reading', ['stop']], ['continue', ['resume']], ['pause', []], ['slow down', ['slower', 'resume']]] as const) {
-    const { a, rec, clock, log } = setup();
+test('assistant: a pause between the wake phrase and the question works (the engine starts a new segment)', async () => {
+  const { a, rec, clock, log } = setup();
+  await a.enable({ wake: true });
+  rec.say('hey exam mate', true); await settle();
+  rec.say('what is dna'); await settle();
+  clock.advance(1500); await settle();
+  assert.ok(log.includes('ask:what is dna'));
+});
+
+test('assistant: if the engine closes the session right after the wake phrase, a fresh one is opened for the question', async () => {
+  const { a, rec, clock, log } = setup();
+  await a.enable({ wake: true });
+  rec.say('hey exam mate'); await settle();
+  rec.end('ended'); await settle();
+  assert.equal(rec.starts, 2, 'new session for the question');
+  assert.equal(log.filter((l) => l === 'ding').length, 1, 'only one ding');
+  rec.say('what is dna', true); clock.advance(600); await settle();
+  assert.ok(log.includes('ask:what is dna'));
+});
+
+test('assistant: the AI decides what is an instruction, however it is worded: no fixed phrases', async () => {
+  const cases: [string, AskResult['action'], string[]][] = [
+    ['could you try going faster', 'faster', ['faster', 'resume']],
+    ["i didn't catch that", 'repeat', ['repeat']],
+    ['ok i have that, skip ahead', 'next', ['next']],
+    ['take me to the one before', 'back', ['back']],
+    ['hold on a sec', 'pause', []],
+    ['alright carry on', 'resume', ['resume']],
+    ['that is enough for today', 'stop', ['stop']],
+    ['you are going too quick for me', 'slower', ['slower', 'resume']],
+  ];
+  for (const [said, action, expected] of cases) {
+    const { a, rec, clock, log } = setup({ ask: async (q) => { log.push('ask:' + q); return { action, answer: 'Okay.' }; } });
     await a.enable({ wake: true });
     rec.say('hey exam mate'); await settle();
     rec.say(said, true); clock.advance(600); await settle();
-    assert.ok(!log.some((l) => l.startsWith('ask:')), said + ' must not call the AI');
+    assert.ok(log.includes('ask:' + said), 'the exact words go to the AI: ' + said);
     assert.deepEqual(log.filter((l) => ['next', 'repeat', 'back', 'stop', 'resume', 'slower', 'faster'].includes(l)), expected, said);
+    assert.ok(!log.some((l) => l.startsWith('speak:')), 'an instruction is carried out, not talked about');
     assert.equal(a.getSnapshot().status, 'waiting');
   }
 });
 
-test('assistant: silence after the trigger -> says nothing was heard and carries on reading', async () => {
+test('assistant: if the AI cannot be reached, plain commands still work offline', async () => {
+  const { a, rec, clock, log } = setup({ ask: async () => { throw new AskFailure("I couldn't reach the internet."); } });
+  await a.enable({ wake: true });
+  rec.say('hey exam mate'); await settle(); rec.say('next', true); clock.advance(600); await settle();
+  assert.ok(log.includes('next') && !log.some((l) => l.startsWith('speak:')));
+});
+
+test('assistant: an unrecognised sentence with the AI down is answered honestly, not ignored', async () => {
+  const { a, rec, clock, log } = setup({ ask: async () => { throw new AskFailure("I couldn't reach the internet."); } });
+  await a.enable({ wake: true });
+  rec.say('hey exam mate'); await settle(); rec.say('what does reconciliation mean', true); clock.advance(600); await settle();
+  assert.ok(log.includes("speak:I couldn't reach the internet.") && log.includes('resume'));
+});
+
+test('assistant: silence after the trigger is spoken ("I didn\'t catch that") and reading carries on', async () => {
   const { a, rec, clock, log } = setup();
   await a.enable({ wake: true });
   rec.say('hey exam mate'); await settle();
   clock.advance(6000); await settle();
-  assert.ok(log.includes('errtone') && log.includes('resume'));
-  assert.equal(a.getSnapshot().message, "I didn't hear anything.");
+  assert.ok(log.includes('errtone') && log.includes("speak:Sorry, I didn't catch that.") && log.includes('resume'));
+  assert.equal(a.getSnapshot().message, "I didn't catch that.");
   assert.equal(a.getSnapshot().status, 'waiting');
 });
 
@@ -156,29 +208,68 @@ test('assistant: if the reader was already paused by the student it is left paus
 test('assistant: AI failure is spoken kindly and reading carries on', async () => {
   const { a, rec, clock, log, answered } = setup({ ask: async () => { throw new AskFailure('Add your Gemini key in Settings to ask questions.', 'key'); } });
   await a.enable({ wake: true });
-  rec.say('hey exam mate what is dna'); await settle();
-  assert.ok(log.includes('speak:Add your Gemini key in Settings to ask questions.'));
+  rec.say('hey exam mate'); await settle(); rec.say('what is dna', true); clock.advance(600); await settle();
+  assert.ok(log.includes('speak:Add your Gemini key in Settings to ask questions.'), 'the problem is spoken, so earbud users hear it');
   assert.ok(log.includes('resume'));
-  assert.equal(answered.length, 0);
-  void clock;
+  assert.equal(answered.length, 0, 'not saved as an answer');
 });
 
 test('assistant: a revoked license stops everything and tells the app', async () => {
-  const { a, rec, log, lost } = setup({ ask: async () => { throw new AskFailure('License not valid.', 'license'); } });
+  const { a, rec, clock, log, lost } = setup({ ask: async () => { throw new AskFailure('License not valid.', 'license'); } });
   await a.enable({ wake: true });
-  rec.say('hey exam mate what is dna'); await settle();
+  rec.say('hey exam mate'); await settle(); rec.say('what is dna', true); clock.advance(600); await settle();
   assert.equal(lost(), 1);
   assert.ok(!log.includes('resume'));
 });
 
-test('assistant: a hanging AI call times out', async () => {
+test('assistant: a hanging AI times out, says so, and the reader carries on', async () => {
   const { a, rec, clock, log } = setup({ ask: () => new Promise(() => {}) });
   await a.enable({ wake: true });
-  rec.say('hey exam mate what is dna'); await settle();
+  rec.say('hey exam mate'); await settle(); rec.say('what is dna', true); clock.advance(600); await settle();
   assert.equal(a.getSnapshot().status, 'thinking');
-  clock.advance(25_000); await settle();
+  clock.advance(18_000); await settle();
   assert.ok(log.some((l) => l.startsWith('speak:Sorry, that took too long')));
   assert.ok(log.includes('resume'));
+});
+
+test('assistant: "still thinking" appears when the AI is slow, and goes away with the answer', async () => {
+  let release!: (r: AskResult) => void;
+  const { a, rec, clock } = setup({ ask: () => new Promise<AskResult>((r) => { release = r; }) });
+  await a.enable({ wake: true });
+  rec.say('hey exam mate'); await settle(); rec.say('what is dna', true); clock.advance(600); await settle();
+  assert.equal(a.getSnapshot().slow, false);
+  clock.advance(5000); await settle();
+  assert.equal(a.getSnapshot().slow, true);
+  release({ action: 'none', answer: 'Deoxyribonucleic acid.', ms: 6200 }); await settle();
+  assert.equal(a.getSnapshot().slow, false);
+  assert.equal(a.getSnapshot().ms, 6200);
+});
+
+test('assistant: wakes the server up as soon as it is triggered, while the person is still speaking', async () => {
+  const { a, rec, log } = setup();
+  await a.enable({ wake: true });
+  const n = log.filter((l) => l === 'warm').length;
+  rec.say('hey exam mate'); await settle();
+  assert.equal(log.filter((l) => l === 'warm').length, n + 1);
+});
+
+test('assistant: in hold mode the ding means the microphone is really open', async () => {
+  const { a, rec, clock, log } = setup();
+  await a.enable({ wake: false });
+  void a.trigger('hold'); await settle();
+  assert.ok(!log.includes('ding'), 'no ding before the microphone is ready');
+  rec.ready(); await settle();
+  assert.equal(log.filter((l) => l === 'ding').length, 1);
+  clock.advance(2000);
+  assert.equal(log.filter((l) => l === 'ding').length, 1, 'never twice');
+});
+
+test('assistant: if the microphone never says it is ready, it dings anyway', async () => {
+  const { a, clock, log } = setup();
+  await a.enable({ wake: false });
+  void a.trigger('hold'); await settle();
+  clock.advance(900); await settle();
+  assert.equal(log.filter((l) => l === 'ding').length, 1);
 });
 
 test('assistant: ignores new triggers while busy, and when switched off', async () => {
@@ -193,12 +284,12 @@ test('assistant: ignores new triggers while busy, and when switched off', async 
 });
 
 test('assistant: disabling mid-question abandons it quietly', async () => {
-  let release!: (v: string) => void;
-  const { a, rec, log } = setup({ ask: () => new Promise<string>((r) => { release = r; }) });
+  let release!: (r: AskResult) => void;
+  const { a, rec, clock, log } = setup({ ask: () => new Promise<AskResult>((r) => { release = r; }) });
   await a.enable({ wake: true });
-  rec.say('hey exam mate what is dna'); await settle();
+  rec.say('hey exam mate'); await settle(); rec.say('what is dna', true); clock.advance(600); await settle();
   await a.disable();
-  release('late answer'); await settle();
+  release({ action: 'none', answer: 'late answer' }); await settle();
   assert.ok(!log.some((l) => l.startsWith('speak:')));
   assert.equal(a.getSnapshot().status, 'off');
 });

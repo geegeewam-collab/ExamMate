@@ -54,3 +54,12 @@ const SAY: Record<string, string> = {
 /** "Say punctuation aloud": turns , . ? etc. into spoken words. */
 export const speakPunctuation = (t: string) =>
   t.replace(/([,;:.?!])(?=\s|$)/g, (m) => ' ' + SAY[m] + ' ');
+
+/** The part of a long text around the phrase being read (what the AI needs), so each question stays small and quick. */
+export function windowAround(text: string, current: string, max: number): string {
+  if (text.length <= max) return text;
+  const at = current ? text.indexOf(current) : -1;
+  const centre = at >= 0 ? at + Math.floor(current.length / 2) : 0;
+  const start = Math.max(0, Math.min(centre - Math.floor(max * 0.35), text.length - max));
+  return text.slice(start, start + max);
+}

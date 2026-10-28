@@ -54,6 +54,7 @@ export async function handleAnswer(req: Request, store: Store): Promise<Response
       const items = parse(raw);
       return items.length ? items : null;
     },
+    { timeoutMs: 40_000, deadlineMs: 52_000 },
   );
   if (out.ok) {
     const text = out.value.map((i) => (i.label ? i.label + '. ' : '') + i.answer).join('\n');

@@ -241,6 +241,7 @@ input[type='range']::-moz-range-thumb { width: 26px; height: 26px; border-radius
 .sheet-bar { display: flex; align-items: center; justify-content: space-between; }
 .pill { display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border-radius: 17px; background: var(--fill); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px 12px; display: flex; flex-direction: column; }
+.sheet-body > * { flex-shrink: 0; } /* long phrases must push things down, never overlap them */
 .eyebrow { margin-top: 14px; text-align: center; font-size: 13px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
 .phrase { display: flex; align-items: center; justify-content: center; min-height: 4.4em; margin: 10px 0 6px; text-align: center; font-size: clamp(2rem, 9vw, 2.75rem); line-height: 1.12; font-weight: 700; letter-spacing: -0.03em; overflow-wrap: anywhere; animation: rise 0.35s ease-out; }
 .phrase mark { color: inherit; background: linear-gradient(transparent 66%, var(--accent-soft) 66%); -webkit-box-decoration-break: clone; box-decoration-break: clone; }
@@ -325,3 +326,7 @@ button.link { background: none; border: 0; padding: 8px; font: inherit; font-siz
 @keyframes holdfill { to { transform: scaleX(1); } }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--glow); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 @keyframes pulse-scale { 50% { transform: scale(1.18); } }
+
+/* long phrases get a smaller size so a whole sentence fits on the screen */
+.phrase.lg { font-size: clamp(1.6rem, 6.8vw, 2.25rem); min-height: 0; }
+.phrase.xl { font-size: clamp(1.3rem, 5.4vw, 1.85rem); min-height: 0; line-height: 1.2; }

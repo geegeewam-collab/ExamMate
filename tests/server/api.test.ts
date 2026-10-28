@@ -261,20 +261,30 @@ test('answer: oversized request and burst limit', async () => {
   assert.equal((await handleAnswer(ans(withKey(h)), st)).status, 429, 'the 13th in 10 minutes is refused');
 });
 
-/* ---------------- /api/ask (voice questions) ---------------- */
-import { handleAsk, cleanSpoken } from '../../server/ask';
+/* ---------------- /api/ask (voice questions and commands) ---------------- */
+import { handleAsk, cleanSpoken, parseIntent } from '../../server/ask';
+import { generate, describeFailure } from '../../server/gemini';
 
-const fakeAsk = (status = 200, text = 'Photosynthesis is how plants make food from light.') => {
-  const seen: { body: string; key: string | null }[] = [];
+const modelList = { models: [{ name: 'models/gemini-3-flash', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }] };
+const intent = (answer: string, action = 'none') => JSON.stringify({ action, answer });
+const textOf = (t: string) => ({ candidates: [{ content: { parts: [{ text: t }] } }] });
+
+/** Fake Google. `reply` decides each generateContent response. */
+const fakeAsk = (reply: (n: number, body: any, model: string) => Response | string = () => intent('Photosynthesis is how plants make food from light.')) => {
+  const seen: { model: string; body: any; key: string | null }[] = [];
+  let listed = 0;
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     const u = String(url);
-    if (u.includes('/models?')) return new Response(JSON.stringify({ models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }] }));
-    seen.push({ body: String(init?.body), key: new Headers(init?.headers).get('x-goog-api-key') });
-    if (status !== 200) return new Response(JSON.stringify({ error: { message: status === 400 ? 'API key not valid.' : 'boom' } }), { status });
-    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }));
+    if (u.includes('/models?')) { listed++; return new Response(JSON.stringify(modelList)); }
+    const body = JSON.parse(String(init?.body));
+    const model = u.match(/models\/([^:]+):/)![1];
+    seen.push({ model, body, key: new Headers(init?.headers).get('x-goog-api-key') });
+    const r = reply(seen.length, body, model);
+    return typeof r === 'string' ? new Response(JSON.stringify(textOf(r))) : r;
   }) as typeof fetch;
-  return seen;
+  return Object.assign(seen, { listed: () => listed });
 };
+const google = (status: number, message: string) => new Response(JSON.stringify({ error: { message } }), { status });
 const ask = (h: Record<string, string>, body: unknown) => post('/api/ask', body, h);
 
 test('ask: needs a license and, for students, their own Gemini key', async () => {
@@ -292,10 +302,42 @@ test('ask: answers a spoken question using the student key, with the answers as 
   const seen = fakeAsk();
   const r = await handleAsk(ask(withKey(h), { question: 'what does that mean', context: 'Question 1. Mitosis is cell division.', current: 'Mitosis is' }), st);
   assert.equal(r.status, 200);
-  assert.equal((await r.json()).answer, 'Photosynthesis is how plants make food from light.');
+  const d = await r.json();
+  assert.deepEqual([d.action, d.answer], ['none', 'Photosynthesis is how plants make food from light.']);
+  assert.ok(typeof d.ms === 'number' && d.model);
   assert.ok(seen.length === 1 && seen[0].key === STUDENT_KEY);
-  assert.match(seen[0].body, /Mitosis is cell division/);
-  assert.match(seen[0].body, /Student asked: what does that mean/);
+  const sent = seen[0].body.contents[0].parts[0].text;
+  assert.match(sent, /Mitosis is cell division/);
+  assert.match(sent, /The student said: what does that mean/);
+});
+
+test('ask: the AI decides when the student wants the reader controlled, however they put it', async () => {
+  const { st, h } = await activated();
+  for (const [said, action] of [['could you try going faster', 'faster'], ["I didn't catch that", 'repeat'], ['hold on a sec', 'pause'], ['ok skip this bit', 'next']] as const) {
+    const seen = fakeAsk(() => intent(action === 'faster' ? 'Going faster.' : 'Okay.', action));
+    const r = await handleAsk(ask(withKey(h), { question: said }), st);
+    const d = await r.json();
+    assert.equal(d.action, action, said);
+    assert.match(seen[0].body.contents[0].parts[0].text, new RegExp('The student said: ' + said));
+  }
+});
+
+test('ask: the prompt gives the AI the list of actions and the schema only allows those', async () => {
+  const { st, h } = await activated();
+  const seen = fakeAsk();
+  await handleAsk(ask(withKey(h), { question: 'anything' }), st);
+  const sent = seen[0].body;
+  assert.deepEqual(sent.generationConfig.responseSchema.properties.action.enum, ['none', 'repeat', 'next', 'back', 'pause', 'resume', 'stop', 'slower', 'faster']);
+  for (const w of ['repeat', 'next', 'back', 'pause', 'resume', 'stop', 'slower', 'faster']) assert.match(sent.contents[0].parts[0].text, new RegExp(w));
+});
+
+test('parseIntent: tolerant of messy model output', () => {
+  assert.deepEqual(parseIntent('{"action":"faster","answer":"**Going** faster."}'), { action: 'faster', answer: 'Going faster.' });
+  assert.deepEqual(parseIntent('{"action":"dance","answer":"Hello there."}'), { action: 'none', answer: 'Hello there.' }, 'unknown action becomes none');
+  assert.equal(parseIntent('{"action":"none","answer":""}'), null, 'a question with no reply is unusable');
+  assert.deepEqual(parseIntent('{"action":"next","answer":""}'), { action: 'next', answer: '' }, 'an action may have no words');
+  assert.equal(parseIntent('not json'), null);
+  assert.equal(cleanSpoken('**Bold** and `code`\n\n# Title'), 'Bold and code Title');
 });
 
 test('ask: owner uses the server key', async () => {
@@ -307,18 +349,15 @@ test('ask: owner uses the server key', async () => {
   assert.equal(seen[0].key, 'fake-gemini');
 });
 
-test('ask: rejects empty questions, cleans markdown, maps Google errors', async () => {
+test('ask: rejects empty questions and maps Google errors', async () => {
   const { st, h } = await activated();
   fakeAsk();
   assert.equal((await handleAsk(ask(withKey(h), { question: ' ' }), st)).status, 400);
-  assert.equal(cleanSpoken('**Bold** and `code`\n\n# Title'), 'Bold and code Title');
-  fakeAsk(200, '**Four** is the answer.\n- really');
-  assert.equal((await (await handleAsk(ask(withKey(h), { question: 'two plus two' }), st)).json()).answer, 'Four is the answer. - really');
-  fakeAsk(400);
+  fakeAsk(() => google(400, 'API key not valid.'));
   const bad = await handleAsk(ask(withKey(h), { question: 'two plus two' }), st);
   assert.equal(bad.status, 400);
   assert.equal((await bad.json()).code, 'student_key');
-  fakeAsk(429);
+  fakeAsk(() => google(429, 'quota'));
   assert.equal((await (await handleAsk(ask(withKey(h), { question: 'two plus two' }), st)).json()).code, 'student_limit');
 });
 
@@ -327,4 +366,87 @@ test('ask: burst limit protects the server', async () => {
   fakeAsk();
   for (let i = 0; i < 40; i++) assert.equal((await handleAsk(ask(withKey(h), { question: 'hello there' }), st)).status, 200);
   assert.equal((await handleAsk(ask(withKey(h), { question: 'hello there' }), st)).status, 429);
+});
+
+test('ask: warm-up only checks the license: no key needed, nothing sent to Google, not counted against the limit', async () => {
+  const { st, h } = await activated();
+  const seen = fakeAsk();
+  for (let i = 0; i < 60; i++) assert.equal((await handleAsk(ask(h, { warm: true }), st)).status, 200);
+  assert.equal(seen.length, 0);
+  assert.equal(seen.listed(), 0);
+  assert.equal((await handleAsk(ask({}, { warm: true }), st)).status, 401, 'still needs a valid license');
+  assert.equal((await handleAsk(ask(withKey(h), { question: 'hello there' }), st)).status, 200, 'limit untouched');
+});
+
+/* ---------------- speed ---------------- */
+test('ask: goes straight to a fast Lite model with no model lookup, and thinking is off', async () => {
+  const { st, h } = await activated();
+  const seen = fakeAsk();
+  await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st);
+  assert.equal(seen.listed(), 0, 'no extra round trip to list models');
+  assert.equal(seen[0].model, 'gemini-flash-lite-latest');
+  assert.equal(seen[0].body.generationConfig.thinkingConfig.thinkingBudget, 0);
+  assert.ok(seen[0].body.generationConfig.maxOutputTokens >= 800);
+});
+
+test('ask: if the Lite alias is unavailable it moves on, and only then looks up models', async () => {
+  const { st, h } = await activated();
+  const seen = fakeAsk((n, _b, model) => (model === 'gemini-flash-lite-latest' ? google(404, 'models/gemini-flash-lite-latest is not found') : intent('Fine.')));
+  const r = await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st);
+  assert.equal(r.status, 200);
+  assert.deepEqual(seen.map((s) => s.model), ['gemini-flash-lite-latest', 'gemini-flash-latest']);
+  assert.equal(seen.listed(), 0, 'second preferred model worked, still no lookup');
+});
+
+test('ask: GEMINI_ASK_MODEL overrides the model', async () => {
+  const { st, h } = await activated();
+  process.env.GEMINI_ASK_MODEL = 'gemini-my-model';
+  const seen = fakeAsk();
+  await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st);
+  delete process.env.GEMINI_ASK_MODEL;
+  assert.equal(seen[0].model, 'gemini-my-model');
+});
+
+test('ask: a model that refuses the thinking setting is retried without it, on the same model', async () => {
+  const { st, h } = await activated();
+  const seen = fakeAsk((_n, body) => (body.generationConfig.thinkingConfig ? google(400, 'Thinking budget is not supported for this model.') : intent('Works without it.')));
+  const r = await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st);
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).answer, 'Works without it.');
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].model, seen[1].model);
+  assert.deepEqual(seen.map((s) => !!s.body.generationConfig.thinkingConfig), [true, false]);
+});
+
+test('generate: a model that hangs is abandoned after the per-call limit and the next one is tried', async () => {
+  const calls: string[] = [];
+  globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes('/models?')) return Promise.resolve(new Response(JSON.stringify(modelList)));
+    calls.push(u.match(/models\/([^:]+):/)![1]);
+    if (calls.length === 1) return new Promise((_res, rej) => init!.signal!.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+    return Promise.resolve(new Response(JSON.stringify(textOf('Second model answered.'))));
+  }) as typeof fetch;
+  const t0 = Date.now();
+  const out = await generate('AIzaKey_1234567890123456789', { contents: [] }, (d) => d.candidates[0].content.parts[0].text, { timeoutMs: 80, deadlineMs: 5000 });
+  assert.ok(out.ok && out.value === 'Second model answered.');
+  assert.ok(Date.now() - t0 < 1500);
+  assert.equal(calls.length, 2);
+});
+
+test('generate: when every model hangs it gives up inside the total budget with a "slow" explanation', async () => {
+  globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).includes('/models?')) return Promise.resolve(new Response(JSON.stringify(modelList)));
+    return new Promise((_res, rej) => init!.signal!.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+  }) as typeof fetch;
+  const t0 = Date.now();
+  const out = await generate('AIzaKey_1234567890123456789', { contents: [] }, () => null, { timeoutMs: 700, deadlineMs: 2300 });
+  const took = Date.now() - t0;
+  assert.ok(!out.ok);
+  assert.ok(took < 3500, `finished in ${took}ms, inside the budget instead of running on`);
+  if (!out.ok) {
+    const f = describeFailure(out.last, false);
+    assert.equal(f.code, 'slow');
+    assert.match(f.error, /taking too long/);
+  }
 });

@@ -6,7 +6,7 @@ export async function models(key: string): Promise<string[]> {
   if (!cache || Date.now() - cache.at > 3_600_000) {
     let names: string[] = [];
     try {
-      const r = await fetch(`${API}/models?pageSize=200`, { headers: { 'x-goog-api-key': key } });
+      const r = await fetch(`${API}/models?pageSize=200`, { headers: { 'x-goog-api-key': key }, signal: AbortSignal.timeout(6000) });
       if (r.ok) {
         const d = await r.json();
         names = (d.models ?? [])
@@ -55,34 +55,87 @@ export function parse(raw: string): { label: string; answer: string }[] {
 
 export interface GeminiFail { status: number; msg: string }
 
+export interface GenerateOptions {
+  /** Models to try first, in order, without a lookup (fast path). */
+  models?: string[];
+  /** Longest a single model call may take. */
+  timeoutMs?: number;
+  /** Total time budget across all models, so retries can never run past the function limit. */
+  deadlineMs?: number;
+  /** Ask the model not to spend time "thinking" first (fast spoken answers). Retried without it if the model refuses. */
+  noThinking?: boolean;
+}
+
+const isThinkingError = (status: number, msg: string) => status === 400 && /think/i.test(msg);
+
 /** Tries the newest Flash models in turn. `accept` turns a Gemini response into a value, or null if it is empty. */
 export async function generate<T>(
-  apiKey: string, body: unknown, accept: (d: any) => T | null,
+  apiKey: string, body: any, accept: (d: any) => T | null, opts: GenerateOptions = {},
 ): Promise<{ ok: true; value: T; model: string } | { ok: false; last: GeminiFail }> {
+  const started = Date.now();
+  const deadline = opts.deadlineMs ?? 55_000;
+  const perCall = opts.timeoutMs ?? 40_000;
   let last: GeminiFail = { status: 502, msg: '' };
-  for (const model of await models(apiKey)) {
-    let r: Response;
+
+  const call = async (model: string, payload: unknown): Promise<{ r: Response } | { err: GeminiFail }> => {
+    const left = deadline - (Date.now() - started);
+    if (left < 1500) return { err: { status: 504, msg: 'time budget used up' } };
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), Math.min(perCall, left));
     try {
-      r = await fetch(`${API}/models/${model}:generateContent`, {
+      const r = await fetch(`${API}/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
+        signal: ctl.signal,
       });
+      return { r };
     } catch (e) {
-      last = { status: 502, msg: `${model}: could not reach Google (${String((e as Error)?.message || e).slice(0, 60)})` };
-      continue;
+      const aborted = (e as Error)?.name === 'AbortError';
+      return { err: { status: aborted ? 504 : 502, msg: `${model}: ${aborted ? 'took too long' : 'could not reach Google'}` } };
+    } finally {
+      clearTimeout(t);
     }
-    if (r.ok) {
-      const d = await r.json().catch(() => null);
-      const v = d ? accept(d) : null;
-      if (v) return { ok: true, value: v, model };
-      last = { status: 502, msg: 'empty answer from ' + model };
-      continue;
+  };
+
+  const tried = new Set<string>();
+  const batches: (() => Promise<string[]>)[] = [];
+  if (opts.models?.length) batches.push(async () => opts.models!);
+  batches.push(() => models(apiKey)); // only looked up if the preferred models did not work
+
+  outer: for (const getBatch of batches) {
+    for (const model of await getBatch()) {
+      if (tried.has(model)) continue;
+      tried.add(model);
+
+      let payload = body;
+      if (opts.noThinking) payload = { ...body, generationConfig: { ...body.generationConfig, thinkingConfig: { thinkingBudget: 0 } } };
+
+      let res = await call(model, payload);
+      // Some models do not accept a thinking setting: send the same request again without it.
+      if ('r' in res && !res.r.ok && opts.noThinking) {
+        const e = await res.r.clone().json().catch(() => null);
+        if (isThinkingError(res.r.status, String(e?.error?.message || ''))) res = await call(model, body);
+      }
+
+      if ('err' in res) {
+        last = res.err;
+        if (res.err.status === 504 && /budget/.test(res.err.msg)) break outer;
+        continue;
+      }
+      const r = res.r;
+      if (r.ok) {
+        const d = await r.json().catch(() => null);
+        const v = d ? accept(d) : null;
+        if (v) return { ok: true, value: v, model };
+        last = { status: 502, msg: 'empty answer from ' + model };
+        continue;
+      }
+      const e = await r.json().catch(() => null);
+      last = { status: r.status, msg: `${model}: ${e?.error?.message || r.statusText}` };
+      console.error('Gemini error', last.status, last.msg);
+      if (r.status === 401 || r.status === 403 || (r.status === 400 && /api key/i.test(last.msg))) break outer;
     }
-    const e = await r.json().catch(() => null);
-    last = { status: r.status, msg: `${model}: ${e?.error?.message || r.statusText}` };
-    console.error('Gemini error', last.status, last.msg);
-    if (r.status === 401 || r.status === 403 || (r.status === 400 && /api key/i.test(last.msg))) break;
   }
   return { ok: false, last };
 }
@@ -100,6 +153,7 @@ export function describeFailure(last: GeminiFail, owner: boolean): { code: strin
       ? { code: 'rate_limited', error: 'The AI service is busy. Wait a minute and try again.', status: 429 }
       : { code: 'student_limit', error: "You've used up your free Gemini allowance for now. Wait a minute, or try again later today.", status: 429 };
   }
+  if (last.status === 504) return { code: 'slow', error: 'The AI is taking too long right now. Try again in a moment.', status: 504 };
   if (last.status === 404 || /no longer available|not found/.test(m)) return { code: 'no_model', error: 'No AI model is available right now. Try again later.', status: 502 };
   return { code: 'failed', error: 'The photo could not be processed. Try again, or try a clearer photo.', status: 502 };
 }

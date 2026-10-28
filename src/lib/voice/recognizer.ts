@@ -3,6 +3,8 @@
 export type EndReason = 'ended' | 'no-speech' | 'denied' | 'unavailable' | 'error';
 
 export interface RecognizerHandlers {
+  /** Called once when the microphone is really open (so a "ding" means "speak now" and no words are lost). */
+  onReady?(): void;
   /** Called with the latest transcript (interim while speaking, final when the engine is sure). */
   onText(text: string, final: boolean): void;
   /** Called once when this listening session is over. */
@@ -45,12 +47,17 @@ export function createWebRecognizer(w: any, lang: string): Recognizer | null {
       r.interimResults = true;
       r.maxAlternatives = 1;
       let ended = false;
+      let ready = false;
       const end = (reason: EndReason, detail?: string) => {
         if (ended) return;
         ended = true;
         h.onEnd(reason, detail);
       };
+      const markReady = () => { if (!ready) { ready = true; h.onReady?.(); } };
+      r.onaudiostart = markReady;
+      r.onstart = markReady;
       r.onresult = (e: any) => {
+        markReady();
         const res = e.results[e.results.length - 1];
         if (res && res[0]) h.onText(String(res[0].transcript), !!res.isFinal);
       };
@@ -61,8 +68,16 @@ export function createWebRecognizer(w: any, lang: string): Recognizer | null {
       r.onend = () => end('ended');
       r.start();
     },
+    /** Resolves once the session has really closed (or after 600 ms), so the next one never overlaps it. */
     async stop() {
-      try { rec?.stop(); } catch { /* ignore */ }
+      const r = rec;
+      if (!r) return;
+      await new Promise<void>((res) => {
+        const t = setTimeout(res, 600);
+        const prev = r.onend;
+        r.onend = (...a: unknown[]) => { clearTimeout(t); try { prev?.(...a); } finally { res(); } };
+        try { r.stop(); } catch { clearTimeout(t); res(); }
+      });
     },
   };
 }
@@ -108,6 +123,7 @@ export function createNativeRecognizer(SR: NativePlugin, lang: string): Recogniz
         if (t) h.onText(String(t), false);
       }));
       handles.push(await SR.addListener('listeningState', (d) => {
+        if (d?.status === 'started') h.onReady?.();
         if (d?.status === 'stopped') end('ended');
       }));
       try {
