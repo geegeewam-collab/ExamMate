@@ -450,3 +450,12 @@ test('generate: when every model hangs it gives up inside the total budget with 
     assert.match(f.error, /taking too long/);
   }
 });
+
+test('ask: reports where the server spent its time, including every call made to Google', async () => {
+  const { st, h } = await activated();
+  fakeAsk((_n, body) => (body.generationConfig.thinkingConfig ? google(400, 'Thinking budget is not supported for this model.') : intent('Works without it.')));
+  const d = await (await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st)).json();
+  for (const k of ['verifyMs', 'limitMs', 'aiMs', 'totalMs']) assert.ok(typeof d.timing[k] === 'number' && d.timing[k] >= 0, k);
+  assert.equal(d.ms, d.timing.totalMs);
+  assert.deepEqual(d.timing.tries.map((x: any) => [x.status, x.note ?? '']), [[400, ''], [200, 'retried without the thinking setting']], 'a retry without thinking is visible, because it makes the answer slow');
+});

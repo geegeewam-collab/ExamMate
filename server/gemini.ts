@@ -55,6 +55,9 @@ export function parse(raw: string): { label: string; answer: string }[] {
 
 export interface GeminiFail { status: number; msg: string }
 
+/** One HTTP call to Google: which model, what came back, how long it took. Shown to the owner so a slow answer can be explained. */
+export interface CallTrace { model: string; status: number; ms: number; note?: string }
+
 export interface GenerateOptions {
   /** Models to try first, in order, without a lookup (fast path). */
   models?: string[];
@@ -71,8 +74,9 @@ const isThinkingError = (status: number, msg: string) => status === 400 && /thin
 /** Tries the newest Flash models in turn. `accept` turns a Gemini response into a value, or null if it is empty. */
 export async function generate<T>(
   apiKey: string, body: any, accept: (d: any) => T | null, opts: GenerateOptions = {},
-): Promise<{ ok: true; value: T; model: string } | { ok: false; last: GeminiFail }> {
+): Promise<{ ok: true; value: T; model: string; trace: CallTrace[] } | { ok: false; last: GeminiFail; trace: CallTrace[] }> {
   const started = Date.now();
+  const trace: CallTrace[] = [];
   const deadline = opts.deadlineMs ?? 55_000;
   const perCall = opts.timeoutMs ?? 40_000;
   let last: GeminiFail = { status: 502, msg: '' };
@@ -98,6 +102,14 @@ export async function generate<T>(
     }
   };
 
+  /** Same as `call`, but remembers how long it took and what came back. */
+  const timed = async (model: string, payload: unknown, note?: string) => {
+    const t0 = Date.now();
+    const res = await call(model, payload);
+    trace.push({ model, status: 'r' in res ? res.r.status : res.err.status, ms: Date.now() - t0, ...(note ? { note } : {}) });
+    return res;
+  };
+
   const tried = new Set<string>();
   const batches: (() => Promise<string[]>)[] = [];
   if (opts.models?.length) batches.push(async () => opts.models!);
@@ -111,11 +123,11 @@ export async function generate<T>(
       let payload = body;
       if (opts.noThinking) payload = { ...body, generationConfig: { ...body.generationConfig, thinkingConfig: { thinkingBudget: 0 } } };
 
-      let res = await call(model, payload);
+      let res = await timed(model, payload);
       // Some models do not accept a thinking setting: send the same request again without it.
       if ('r' in res && !res.r.ok && opts.noThinking) {
         const e = await res.r.clone().json().catch(() => null);
-        if (isThinkingError(res.r.status, String(e?.error?.message || ''))) res = await call(model, body);
+        if (isThinkingError(res.r.status, String(e?.error?.message || ''))) res = await timed(model, body, 'retried without the thinking setting');
       }
 
       if ('err' in res) {
@@ -127,7 +139,7 @@ export async function generate<T>(
       if (r.ok) {
         const d = await r.json().catch(() => null);
         const v = d ? accept(d) : null;
-        if (v) return { ok: true, value: v, model };
+        if (v) return { ok: true, value: v, model, trace };
         last = { status: 502, msg: 'empty answer from ' + model };
         continue;
       }
@@ -137,7 +149,7 @@ export async function generate<T>(
       if (r.status === 401 || r.status === 403 || (r.status === 400 && /api key/i.test(last.msg))) break outer;
     }
   }
-  return { ok: false, last };
+  return { ok: false, last, trace };
 }
 
 /** Plain-language explanation of a Gemini failure, different for students (own key) and the owner (server key). */

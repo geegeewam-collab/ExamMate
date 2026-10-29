@@ -49,7 +49,7 @@ export function useAssistant(a: Args): { assistant: VoiceAssistant; state: Assis
       slower: () => live.current.setRate(Math.max(0.1, live.current.settings.rate - 0.1)),
       faster: () => live.current.setRate(Math.min(1.2, live.current.settings.rate + 0.1)),
     },
-    speak: (text) => new Promise<void>((resolve) => {
+    speak: (text, onStart) => new Promise<void>((resolve) => {
       let finished = false;
       let started = false;
       let retried = false;
@@ -64,7 +64,7 @@ export function useAssistant(a: Args): { assistant: VoiceAssistant; state: Assis
       };
       const attempt = () => {
         speech.speak(text, { rate: 0.95, voiceURI: live.current.settings.voice }, {
-          onstart: () => { started = true; clearTimeout(watch); },
+          onstart: () => { started = true; clearTimeout(watch); onStart?.(); },
           onend: done,
           onerror: (e) => { if (e !== 'interrupted' && e !== 'canceled') done(); },
         });

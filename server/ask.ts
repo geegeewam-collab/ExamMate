@@ -66,7 +66,9 @@ export async function handleAsk(req: Request, store: Store): Promise<Response> {
   const t0 = Date.now();
   if (!secret()) return fail('config', 'The server is missing its settings.', 500);
 
+  const tVerify = Date.now();
   const auth = await verify(store, secret(), req.headers.get('x-license-token'), req.headers.get('x-device-id'));
+  const verifyMs = Date.now() - tVerify;
   if (!auth.ok) return fail('license', auth.error, auth.status === 401 ? 401 : 403);
 
   let body: any;
@@ -82,7 +84,10 @@ export async function handleAsk(req: Request, store: Store): Promise<Response> {
     if (!KEY_SHAPE.test(apiKey)) return fail('need_key', 'Add your free Gemini key in Settings to ask questions.', 400);
   }
 
-  if ((await store.hit(`ask:${auth.key}`, 600, 1)) > (auth.owner ? 120 : 40)) return fail('limit', 'Too many questions. Wait a few minutes.', 429);
+  const tLimit = Date.now();
+  const used = await store.hit(`ask:${auth.key}`, 600, 1);
+  const limitMs = Date.now() - tLimit;
+  if (used > (auth.owner ? 120 : 40)) return fail('limit', 'Too many questions. Wait a few minutes.', 429);
 
   const question = String(body?.question ?? '').trim().slice(0, 400);
   if (question.length < 2) return fail('bad', 'No question received.', 400);
@@ -93,13 +98,17 @@ export async function handleAsk(req: Request, store: Store): Promise<Response> {
     `${PROMPT}\n\nAnswers being read to the student:\n${context || '(none)'}\n\n` +
     `The phrase being read right now: ${current || '(none)'}\n\nThe student said: ${question}`;
 
+  const tAi = Date.now();
   const out = await generate(
     apiKey,
     { contents: [{ parts: [{ text }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 800, responseMimeType: 'application/json', responseSchema: SCHEMA } },
     (d) => parseIntent((d.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text || '').join('').trim()),
     { models: fastModels(), timeoutMs: ASK_CALL_MS, deadlineMs: ASK_TOTAL_MS, noThinking: true },
   );
-  if (out.ok) return json({ action: out.value.action, answer: out.value.answer, model: out.model, ms: Date.now() - t0 });
+  const aiMs = Date.now() - tAi;
+  // Where the time went on the server, for the owner's timing panel (verify = licence check, limit = rate-limit counter, ai = Gemini).
+  const timing = { verifyMs, limitMs, aiMs, totalMs: Date.now() - t0, tries: out.trace };
+  if (out.ok) return json({ action: out.value.action, answer: out.value.answer, model: out.model, ms: timing.totalMs, timing });
   const f = describeFailure(out.last, auth.owner);
   return fail(f.code, f.error.replace('The photo could not be processed. Try again, or try a clearer photo.', 'I could not get an answer. Try again.'), f.status, out.last.msg);
 }

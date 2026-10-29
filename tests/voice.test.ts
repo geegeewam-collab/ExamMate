@@ -384,3 +384,98 @@ test('native recognizer: partial results, stop event, final result, permissions'
   plugin.requestPermissions = async () => ({ speechRecognition: 'denied' });
   assert.equal(await r.requestPermission(), false);
 });
+
+/* ------------------------------ stage timing ------------------------------ */
+test('timing: the wait for you to finish is measured from your last new word', async () => {
+  const { a, rec, clock } = setup();
+  await a.enable({ wake: true });
+  rec.say('hey exam mate'); await settle();
+  clock.advance(400);
+  rec.say('what is'); await settle();
+  clock.advance(500);
+  rec.say('what is mitosis'); await settle();
+  clock.advance(1500); await settle();
+
+  const t = a.getSnapshot().timing!;
+  assert.equal(t.source, 'wake');
+  assert.equal(t.endWaitMs, 1500, 'the quiet timer is what we waited for');
+  assert.equal(t.endedBy, 'silence');
+  assert.equal(t.talkMs, 500, 'first word to last word');
+  assert.equal(t.micMs, 0, 'the microphone was already open after the wake phrase');
+});
+
+test('timing: an engine \"final\" result shortens the wait and is reported as such', async () => {
+  const { a, rec, clock } = setup();
+  await a.enable({ wake: true });
+  rec.say('hey exam mate what is mitosis'); await settle();
+  clock.advance(700);
+  rec.say('what is mitosis', true); await settle(); // same words, now final: the words did not change
+  clock.advance(600); await settle();
+  const t = a.getSnapshot().timing!;
+  assert.equal(t.endedBy, 'final');
+  assert.equal(t.endWaitMs, 1300, '0.7 s until the engine said final, then 0.6 s');
+});
+
+test('timing: the engine closing the session by itself is reported', async () => {
+  const { a, rec, clock } = setup();
+  await a.enable({ wake: true });
+  rec.say('hey exam mate what is mitosis'); await settle();
+  clock.advance(900);
+  rec.end(); await settle();
+  const t = a.getSnapshot().timing!;
+  assert.equal(t.endedBy, 'engine');
+  assert.equal(t.endWaitMs, 900);
+});
+
+test('timing: ask, network, server and voice stages add up to what you feel', async () => {
+  let clockRef: { advance(ms: number): void } | null = null;
+  const server = { verifyMs: 120, limitMs: 90, aiMs: 1000, totalMs: 1250, tries: [{ model: 'gemini-flash-lite-latest', status: 200, ms: 980 }] };
+  const { a, rec, clock } = setup({
+    ask: async () => { clockRef!.advance(1800); return { ...ANSWER, timing: { prepMs: 40, roundTripMs: 1750, server } }; },
+    speak: async (_t, onStart) => { clockRef!.advance(300); onStart?.(); },
+  });
+  clockRef = clock;
+  await a.enable({ wake: true });
+  rec.say('hey exam mate what is mitosis'); await settle();
+  clock.advance(1500); await settle();
+
+  const t = a.getSnapshot().timing!;
+  assert.equal(t.endWaitMs, 1500);
+  assert.equal(t.askMs, 1800);
+  assert.equal(t.prepMs, 40);
+  assert.equal(t.roundTripMs, 1750);
+  assert.equal(t.networkMs, 500, 'round trip minus the 1250 ms the server spent');
+  assert.deepEqual(t.server, server);
+  assert.equal(t.voiceMs, 300);
+  assert.equal(t.feltMs, t.endWaitMs + t.askMs! + t.voiceMs!, 'the stages add up to the delay you feel');
+});
+
+test('timing: a command has no voice stage, and a failed ask still shows where the time went', async () => {
+  const cmd = setup({ ask: async () => ({ action: 'faster', answer: 'Going faster.' }) });
+  await cmd.a.enable({ wake: true });
+  cmd.rec.say('hey exam mate speed it up a bit'); await settle();
+  cmd.clock.advance(1500); await settle();
+  assert.equal(cmd.a.getSnapshot().timing!.voiceMs, null);
+  assert.equal(cmd.a.getSnapshot().timing!.feltMs, 1500);
+
+  const bad = setup({ ask: async () => { throw new AskFailure('Sorry, that took too long. Try again.'); } });
+  await bad.a.enable({ wake: true });
+  bad.rec.say('hey exam mate explain osmosis'); await settle();
+  bad.clock.advance(1500); await settle();
+  const t = bad.a.getSnapshot().timing!;
+  assert.equal(t.endWaitMs, 1500);
+  assert.equal(t.feltMs, null, 'no answer ever started');
+});
+
+test('timing: cleared when the next question starts, and when the assistant is switched off', async () => {
+  const { a, rec, clock } = setup();
+  await a.enable({ wake: true });
+  rec.say('hey exam mate what is mitosis'); await settle();
+  clock.advance(1500); await settle();
+  assert.ok(a.getSnapshot().timing);
+  void a.trigger('hold'); await settle(); // runs until it has heard something; do not wait for it
+  assert.equal(a.getSnapshot().status, 'listening');
+  assert.equal(a.getSnapshot().timing, null, 'a new question starts from nothing');
+  await a.disable();
+  assert.equal(a.getSnapshot().timing, null);
+});

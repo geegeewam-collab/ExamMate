@@ -18,12 +18,21 @@ export interface ReaderControl {
 
 export interface AskContext { context: string; current: string }
 
+/** Where the server spent its time (milliseconds). `tries` lists every call made to Google, so a slow answer can be explained. */
+export interface ServerTiming {
+  verifyMs: number; limitMs: number; aiMs: number; totalMs: number;
+  tries: { model: string; status: number; ms: number; note?: string }[];
+}
+/** Measured around the request itself: preparing it, and the whole round trip. */
+export interface AskTiming { prepMs: number; roundTripMs: number; server?: ServerTiming }
+
 /** The AI's decision: do something to the reader (`action`), or just answer (`action: 'none'`). */
 export interface AskResult {
   action: Command | 'none';
   answer: string;
   /** How long the server took, in milliseconds (shown to the owner). */
   ms?: number;
+  timing?: AskTiming;
 }
 
 /** Thrown by the ask function. `license` means access was revoked; `key` means the Gemini key needs attention. */
@@ -37,7 +46,8 @@ export interface AssistantDeps {
   recognizer: Recognizer | null;
   reader: ReaderControl;
   clock: Clock;
-  speak(text: string): Promise<void>;
+  /** Resolves when the voice has finished. `onStart` is called the moment the voice actually begins. */
+  speak(text: string, onStart?: () => void): Promise<void>;
   cancelSpeech(): void;
   /** The AI works out what the person wants, however they word it. */
   ask(question: string, ctx: AskContext): Promise<AskResult>;
@@ -77,6 +87,37 @@ export const DEFAULT_OPTIONS: AssistantOptions = {
 export type AssistantStatus = 'off' | 'idle' | 'waiting' | 'listening' | 'thinking' | 'speaking';
 export type TriggerSource = 'wake' | 'hold' | 'earbud';
 
+/** Why we decided the person had finished talking. */
+export type CaptureEnd = 'silence' | 'final' | 'engine' | 'max' | 'no-speech' | 'cancelled';
+
+/**
+ * Where the time went for one question, in milliseconds. The stages run one after another:
+ * endWaitMs + askMs + voiceMs = feltMs, the delay between your last word and the answer starting.
+ */
+export interface TurnTiming {
+  source: TriggerSource;
+  /** Trigger -> microphone open. About 0 after the wake phrase, because the microphone was already open. */
+  micMs: number | null;
+  /** First word -> last word: how long you spoke (not a delay). */
+  talkMs: number;
+  /** Last word heard -> we decided you had finished. This is the wait for you to stop. */
+  endWaitMs: number;
+  endedBy: CaptureEnd;
+  /** Decided you had finished -> the AI's reply is in hand (prep + network + server). Null if the AI was never asked. */
+  askMs: number | null;
+  /** Building the request: licence header, device id, Gemini key lookup. */
+  prepMs: number | null;
+  /** The whole request: sent -> reply read. */
+  roundTripMs: number | null;
+  /** Round trip minus the server's own time: the phone <-> server network. Null when the server gave no breakdown. */
+  networkMs: number | null;
+  server: ServerTiming | null;
+  /** Reply in hand -> the voice starts. */
+  voiceMs: number | null;
+  /** What it feels like: last word heard -> the answer starts (or the command runs). */
+  feltMs: number | null;
+}
+
 export interface AssistantSnapshot {
   status: AssistantStatus;
   enabled: boolean;
@@ -87,9 +128,14 @@ export interface AssistantSnapshot {
   slow: boolean;
   /** Server time for the last answer, in ms (0 if unknown). */
   ms: number;
+  /** Stage timings for the last question, kept until the next one starts. */
+  timing: TurnTiming | null;
 }
 
-const OFF: AssistantSnapshot = { status: 'off', enabled: false, transcript: '', answer: '', message: '', slow: false, ms: 0 };
+const OFF: AssistantSnapshot = { status: 'off', enabled: false, transcript: '', answer: '', message: '', slow: false, ms: 0, timing: null };
+
+/** What `capture` hands back: what was said, and when each thing happened (clock times). */
+interface Captured { text: string; reason: CaptureEnd; micAt: number | null; firstAt: number; lastAt: number; endedAt: number }
 
 interface LiveSession { sess: number; onText(text: string, final: boolean): void; onEnd(): void }
 
@@ -193,8 +239,11 @@ export class VoiceAssistant {
     await this.stopRecognizer();
     this.resumeOnCancel = false;
     if (resume) this.deps.reader.resume();
+    this.set({ timing: null });
     this.backToReady('');
   }
+
+  private publish(tm: TurnTiming) { this.set({ timing: { ...tm } }); }
 
   private backToReady(message: string) {
     this.restartDelay = 300;
@@ -245,9 +294,9 @@ export class VoiceAssistant {
     if (!this.snap.enabled) return;
     if (this.snap.status !== 'waiting' && this.snap.status !== 'idle') return; // already busy
     const g = ++this.gen;
+    const tTrigger = this.deps.clock.now();
     this.clearTimers();
     this.deps.warm?.(); // wake the server up now, while the person is still speaking
-    void source;
 
     if (liveSess === undefined) {
       await this.stopRecognizer();
@@ -258,10 +307,11 @@ export class VoiceAssistant {
     this.resumeOnCancel = wasPlaying;
     if (wasPlaying) this.deps.reader.pause();
     this.deps.cancelSpeech();
-    this.set({ status: 'listening', transcript: '', answer: '', message: '', slow: false, ms: 0 });
+    this.set({ status: 'listening', transcript: '', answer: '', message: '', slow: false, ms: 0, timing: null });
 
-    const question = await this.capture(g, liveSess !== undefined ? { sess: liveSess, seed } : undefined);
+    const cap = await this.capture(g, liveSess !== undefined ? { sess: liveSess, seed } : undefined);
     if (g !== this.gen) return;
+    const question = cap.text;
 
     if (!question) {
       this.deps.tones.error();
@@ -270,6 +320,11 @@ export class VoiceAssistant {
       await this.deps.speak("Sorry, I didn't catch that.").catch(() => undefined);
       return this.finish(g, wasPlaying, "I didn't catch that.");
     }
+    const tm: TurnTiming = {
+      source, micMs: cap.micAt === null ? null : cap.micAt - tTrigger, talkMs: cap.lastAt - cap.firstAt,
+      endWaitMs: cap.endedAt - cap.lastAt, endedBy: cap.reason,
+      askMs: null, prepMs: null, roundTripMs: null, networkMs: null, server: null, voiceMs: null, feltMs: null,
+    };
     this.set({ transcript: question, status: 'thinking' });
     this.deps.haptics?.thinking();
     const slowTimer = this.later(() => {
@@ -285,6 +340,17 @@ export class VoiceAssistant {
     }
     this.cancelLater(slowTimer);
     if (g !== this.gen) return;
+
+    const tAnswered = this.deps.clock.now();
+    tm.askMs = tAnswered - cap.endedAt;
+    const t = result?.timing;
+    if (t) {
+      tm.prepMs = t.prepMs;
+      tm.roundTripMs = t.roundTripMs;
+      tm.server = t.server ?? null;
+      tm.networkMs = t.server ? Math.max(0, t.roundTripMs - t.server.totalMs) : null;
+    }
+    this.publish(tm); // shown even if the AI failed, so a timeout is visible too
 
     if (failure?.kind === 'license') {
       this.deps.onLicenseLost?.();
@@ -310,12 +376,22 @@ export class VoiceAssistant {
       // The AI understood this as an instruction to the reader: just do it.
       this.deps.haptics?.finish();
       this.runCommand(result.action, wasPlaying);
+      tm.feltMs = this.deps.clock.now() - cap.lastAt;
       this.set({ answer: result.answer, ms: result.ms ?? 0, slow: false });
+      this.publish(tm);
       return this.finish(g, false, result.answer);
     }
 
     this.set({ status: 'speaking', answer: result.answer, ms: result.ms ?? 0, slow: false });
-    await this.deps.speak(result.answer).catch(() => undefined);
+    const tSpeak = this.deps.clock.now();
+    const onVoiceStart = () => {
+      if (g !== this.gen || tm.voiceMs !== null) return; // a retried start must not overwrite the first one
+      const n = this.deps.clock.now();
+      tm.voiceMs = n - tSpeak;
+      tm.feltMs = n - cap.lastAt;
+      this.publish(tm);
+    };
+    await this.deps.speak(result.answer, onVoiceStart).catch(() => undefined);
     if (g !== this.gen) return;
     this.deps.haptics?.finish();
     this.deps.onAnswered?.(question, result.answer);
@@ -348,48 +424,58 @@ export class VoiceAssistant {
    * Listens until the person stops talking and resolves with what was said ('' if nothing).
    * After the wake phrase it keeps using the same listening session, so nothing is lost while restarting.
    */
-  private capture(g: number, live?: { sess: number; seed: string }): Promise<string> {
+  private capture(g: number, live?: { sess: number; seed: string }): Promise<Captured> {
     return new Promise((resolve) => {
+      const clock = this.deps.clock;
       const rec = this.deps.recognizer;
-      if (!rec) return resolve('');
+      const t0 = clock.now();
+      if (!rec) return resolve({ text: '', reason: 'cancelled', micAt: null, firstAt: t0, lastAt: t0, endedAt: t0 });
       let last = live?.seed.trim() ?? '';
       let heard = last.length > 0;
       let done = false;
       let dinged = false;
       let silence: unknown = null;
       let ready: unknown = null;
+      let micAt: number | null = null;
+      let firstAt: number | null = heard ? t0 : null;
+      let lastAt = t0; // when the words last changed
 
       const ding = () => {
         if (dinged) return;
         dinged = true;
+        micAt = clock.now();
         this.deps.tones.ding();
         this.deps.haptics?.start();
       };
-      const finish = () => {
+      const finish = (reason: CaptureEnd) => {
         if (done) return;
         done = true;
         this.abortCapture = null;
         this.live = null;
-        this.deps.clock.clearTimeout(silence);
+        clock.clearTimeout(silence);
         this.cancelLater(ready);
         this.cancelLater(none);
         this.cancelLater(max);
         void rec.stop().catch(() => undefined);
-        resolve(last.trim());
+        resolve({ text: last.trim(), reason, micAt, firstAt: firstAt ?? lastAt, lastAt, endedAt: clock.now() });
       };
-      const none = this.later(() => { if (!heard) finish(); }, this.opts.noSpeechMs);
-      const max = this.later(finish, this.opts.maxMs);
-      this.abortCapture = () => { last = ''; finish(); };
+      const none = this.later(() => { if (!heard) finish('no-speech'); }, this.opts.noSpeechMs);
+      const max = this.later(() => finish('max'), this.opts.maxMs);
+      this.abortCapture = () => { last = ''; finish('cancelled'); };
 
       const bump = (final: boolean) => {
-        this.deps.clock.clearTimeout(silence);
-        silence = this.deps.clock.setTimeout(finish, final ? 600 : this.opts.silenceMs);
+        clock.clearTimeout(silence);
+        silence = clock.setTimeout(() => finish(final ? 'final' : 'silence'), final ? 600 : this.opts.silenceMs);
       };
       const onText = (text: string, final: boolean) => {
         if (done || g !== this.gen) return;
         const m = matchWake(text, this.opts.wakePhrase);
         const q = (m.matched ? m.rest : text).trim();
         if (!q) return; // still only the wake phrase
+        if (q !== last) { // the clock only moves when the words change, so "wait for you to finish" is measured from your last new word
+          lastAt = clock.now();
+          firstAt ??= lastAt;
+        }
         last = q;
         heard = true;
         this.set({ transcript: q });
@@ -401,13 +487,13 @@ export class VoiceAssistant {
         rec.start({
           onReady: () => { this.cancelLater(ready); ding(); },
           onText,
-          onEnd: () => finish(),
-        }).catch(() => finish());
+          onEnd: () => finish('engine'),
+        }).catch(() => finish('engine'));
       };
 
       if (live) {
         ding(); // the microphone is already open: "go ahead"
-        this.live = { sess: live.sess, onText, onEnd: () => { if (done) return; if (heard) finish(); else startFresh(); } };
+        this.live = { sess: live.sess, onText, onEnd: () => { if (done) return; if (heard) finish('engine'); else startFresh(); } };
         if (heard) { this.set({ transcript: last }); bump(false); }
       } else {
         startFresh();
