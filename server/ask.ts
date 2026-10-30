@@ -7,10 +7,10 @@ const fail = (code: string, error: string, status: number, detail = '', extra: R
 
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,200}$/;
 
-// A spoken answer has to be quick. Gemini normally replies in about a second, so a call that is silent after 5 s is stuck:
-// give up on it and try the next model. The whole question gets 9 s (the app waits 11 s).
-export const ASK_CALL_MS = 5_000;
-export const ASK_TOTAL_MS = 9_000;
+// A spoken answer has to be quick, but a slow answer is better than none. With thinking turned down Gemini replies in 1-2 s,
+// so these limits only matter when something is wrong: one call may take 8 s, the whole question 14 s (the app waits 16 s).
+export const ASK_CALL_MS = 8_000;
+export const ASK_TOTAL_MS = 14_000;
 
 export const ACTIONS = ['none', 'repeat', 'next', 'back', 'pause', 'resume', 'stop', 'slower', 'faster'] as const;
 export type Action = (typeof ACTIONS)[number];

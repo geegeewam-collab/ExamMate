@@ -385,7 +385,7 @@ test('ask: goes straight to a fast Lite model with no model lookup, and thinking
   await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st);
   assert.equal(seen.listed(), 0, 'no extra round trip to list models');
   assert.equal(seen[0].model, 'gemini-flash-lite-latest');
-  assert.equal(seen[0].body.generationConfig.thinkingConfig.thinkingBudget, 0);
+  assert.deepEqual(seen[0].body.generationConfig.thinkingConfig, { thinkingLevel: 'minimal' }, 'Gemini 3.x is told to think as little as it can');
   assert.ok(seen[0].body.generationConfig.maxOutputTokens >= 800);
 });
 
@@ -407,15 +407,26 @@ test('ask: GEMINI_ASK_MODEL overrides the model', async () => {
   assert.equal(seen[0].model, 'gemini-my-model');
 });
 
-test('ask: a model that refuses the thinking setting is retried without it, on the same model', async () => {
+test('ask: a model that refuses every thinking setting is retried without one, on the same model', async () => {
   const { st, h } = await activated();
-  const seen = fakeAsk((_n, body) => (body.generationConfig.thinkingConfig ? google(400, 'Thinking budget is not supported for this model.') : intent('Works without it.')));
+  const seen = fakeAsk((_n, body) => (body.generationConfig.thinkingConfig ? google(400, 'Thinking is not supported for this model.') : intent('Works without it.')));
   const r = await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st);
   assert.equal(r.status, 200);
   assert.equal((await r.json()).answer, 'Works without it.');
-  assert.equal(seen.length, 2);
-  assert.equal(seen[0].model, seen[1].model);
-  assert.deepEqual(seen.map((s) => !!s.body.generationConfig.thinkingConfig), [true, false]);
+  assert.ok(seen.every((s) => s.model === seen[0].model), 'all on the same model');
+  assert.deepEqual(seen.map((s) => s.body.generationConfig.thinkingConfig ?? null), [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, { thinkingBudget: 0 }, null]);
+});
+
+test('ask: finds the thinking setting a model accepts, then goes straight to it next time', async () => {
+  const { st, h } = await activated();
+  // an older-style model: only thinkingBudget works
+  const seen = fakeAsk((_n, body) => (body.generationConfig.thinkingConfig && 'thinkingBudget' in body.generationConfig.thinkingConfig ? intent('Quick.') : google(400, 'Unknown name \"thinkingLevel\"')));
+  assert.equal((await (await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st)).json()).answer, 'Quick.');
+  assert.deepEqual(seen.map((s) => s.body.generationConfig.thinkingConfig), [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, { thinkingBudget: 0 }]);
+  const before = seen.length;
+  await handleAsk(ask(withKey(h), { question: 'and this one' }), st);
+  assert.equal(seen.length, before + 1, 'one call, no more guessing');
+  assert.deepEqual(seen[before].body.generationConfig.thinkingConfig, { thinkingBudget: 0 });
 });
 
 test('generate: a model that hangs is abandoned after the per-call limit and the next one is tried', async () => {
@@ -453,11 +464,13 @@ test('generate: when every model hangs it gives up inside the total budget with 
 
 test('ask: reports where the server spent its time, including every call made to Google', async () => {
   const { st, h } = await activated();
-  fakeAsk((_n, body) => (body.generationConfig.thinkingConfig ? google(400, 'Thinking budget is not supported for this model.') : intent('Works without it.')));
+  fakeAsk((_n, body) => (body.generationConfig.thinkingConfig ? google(400, 'Thinking is not supported for this model.') : intent('Works without it.')));
   const d = await (await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st)).json();
   for (const k of ['verifyMs', 'limitMs', 'aiMs', 'totalMs']) assert.ok(typeof d.timing[k] === 'number' && d.timing[k] >= 0, k);
   assert.equal(d.ms, d.timing.totalMs);
-  assert.deepEqual(d.timing.tries.map((x: any) => [x.status, x.note ?? '']), [[400, ''], [200, 'retried without the thinking setting']], 'a retry without thinking is visible, because it makes the answer slow');
+  assert.deepEqual(d.timing.tries.map((x: any) => x.status), [400, 400, 400, 200]);
+  assert.match(d.timing.tries[0].note, /thinkingLevel minimal: Thinking is not supported/, 'what we asked for, and Google\'s own words when it said no');
+  assert.equal(d.timing.tries[3].note, 'no thinking setting', 'running without a thinking setting is visible, because it makes the answer slow');
 });
 
 test('ask: when Google fails, the failure still says how long each call took, so a slow or stuck AI can be told apart from a bad question', async () => {

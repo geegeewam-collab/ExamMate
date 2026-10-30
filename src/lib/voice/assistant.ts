@@ -81,7 +81,7 @@ export interface AssistantOptions {
 
 export const DEFAULT_OPTIONS: AssistantOptions = {
   wakePhrase: 'hey exam mate', noSpeechMs: 6000, silenceMs: 1500, maxMs: 12000,
-  askTimeoutMs: 11000, slowMs: 3000, stopWaitMs: 900, readyDingMs: 900,
+  askTimeoutMs: 16000, slowMs: 3000, stopWaitMs: 900, readyDingMs: 900,
 };
 
 /** off: switched off. idle: ready (hold button works) but not listening for the wake phrase. waiting: listening for it. */
@@ -117,8 +117,10 @@ export interface TurnTiming {
   voiceMs: number | null;
   /** What it feels like: last word heard -> the answer starts (or the command runs). */
   feltMs: number | null;
-  /** The exact words that were sent to the AI. */
+  /** The exact words that were sent to the AI (or understood on the phone). */
   question: string;
+  /** True when a plain command ("faster", "next") was understood on the phone, with no AI at all. */
+  local: boolean;
   /** Why the AI could not answer, if it could not. */
   error: string | null;
 }
@@ -331,8 +333,20 @@ export class VoiceAssistant {
       source, micMs: cap.micAt === null ? null : cap.micAt - tTrigger, talkMs: cap.lastAt - cap.firstAt,
       endWaitMs: cap.endedAt - cap.lastAt, endedBy: cap.reason,
       askMs: null, prepMs: null, roundTripMs: null, networkMs: null, server: null, voiceMs: null, feltMs: null,
-      question, error: null,
+      question, local: false, error: null,
     };
+    // A plain command ("faster", "next", "pause") needs no AI: do it now. Anything else, or any other wording, still goes to the AI.
+    const plain = parseCommand(question);
+    if (plain) {
+      tm.local = true;
+      tm.askMs = 0;
+      tm.feltMs = this.deps.clock.now() - cap.lastAt;
+      this.deps.haptics?.finish();
+      this.runCommand(plain, wasPlaying);
+      this.set({ transcript: question, answer: '', slow: false });
+      this.publish(tm);
+      return this.finish(g, false, '');
+    }
     this.set({ transcript: question, status: 'thinking' });
     this.deps.haptics?.thinking();
     const slowTimer = this.later(() => {

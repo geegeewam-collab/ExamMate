@@ -24,7 +24,7 @@ export async function models(key: string): Promise<string[]> {
   const pinned = process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : [];
   return [...pinned, ...cache.names, 'gemini-flash-latest'].filter((m, i, a) => a.indexOf(m) === i).slice(0, 5);
 }
-export const resetModelCache = () => { cache = null; };
+export const resetModelCache = () => { cache = null; working.clear(); };
 
 export const prompt = (mode: string) => `The attached images are photos of a page of questions, in order. Answer every question you can read.
 Your answers will be read aloud by a text-to-speech voice and written down by hand, so:
@@ -65,11 +65,19 @@ export interface GenerateOptions {
   timeoutMs?: number;
   /** Total time budget across all models, so retries can never run past the function limit. */
   deadlineMs?: number;
-  /** Ask the model not to spend time "thinking" first (fast spoken answers). Retried without it if the model refuses. */
+  /** Ask the model to think as little as it can (fast spoken answers), using whichever setting that model accepts. */
   noThinking?: boolean;
 }
 
-const isThinkingError = (status: number, msg: string) => status === 400 && /think/i.test(msg);
+/**
+ * How to ask a model to think less, newest style first. Gemini 3.x takes `thinkingLevel` (and thinks at full depth if it is not set);
+ * Gemini 2.5 takes `thinkingBudget: 0`; some models take neither. A model that refuses one setting answers 400 within a fraction of a
+ * second, so we simply step down to the next, and remember which one worked for that model.
+ */
+const LADDER: ({ thinkingLevel: string } | { thinkingBudget: number } | null)[] = [{ thinkingLevel: 'minimal' }, { thinkingLevel: 'low' }, { thinkingBudget: 0 }, null];
+const RUNG_NAME = ['thinkingLevel minimal', 'thinkingLevel low', 'thinkingBudget 0', 'no thinking setting'];
+const firstRung = (model: string) => (/gemini-2[.-]/.test(model) ? 2 : 0);
+const working = new Map<string, number>(); // model -> the rung that last worked (kept while the server instance is warm)
 
 /** Tries the newest Flash models in turn. `accept` turns a Gemini response into a value, or null if it is empty. */
 export async function generate<T>(
@@ -102,11 +110,17 @@ export async function generate<T>(
     }
   };
 
-  /** Same as `call`, but remembers how long it took and what came back. */
+  /** Same as `call`, but remembers how long it took and what came back (including Google's own words when it said no). */
   const timed = async (model: string, payload: unknown, note?: string) => {
     const t0 = Date.now();
     const res = await call(model, payload);
-    trace.push({ model, status: 'r' in res ? res.r.status : res.err.status, ms: Date.now() - t0, ...(note ? { note } : {}) });
+    const ms = Date.now() - t0;
+    let n = note ?? '';
+    if ('r' in res && !res.r.ok) {
+      const e = await res.r.clone().json().catch(() => null);
+      n = [n, String(e?.error?.message || res.r.statusText || '').replace(/\s+/g, ' ').slice(0, 140)].filter(Boolean).join(': ');
+    }
+    trace.push({ model, status: 'r' in res ? res.r.status : res.err.status, ms, ...(n ? { note: n } : {}) });
     return res;
   };
 
@@ -120,15 +134,17 @@ export async function generate<T>(
       if (tried.has(model)) continue;
       tried.add(model);
 
-      let payload = body;
-      if (opts.noThinking) payload = { ...body, generationConfig: { ...body.generationConfig, thinkingConfig: { thinkingBudget: 0 } } };
-
-      let res = await timed(model, payload);
-      // Some models do not accept a thinking setting: send the same request again without it.
-      if ('r' in res && !res.r.ok && opts.noThinking) {
+      const withThinking = (t: (typeof LADDER)[number]) => (t ? { ...body, generationConfig: { ...body.generationConfig, thinkingConfig: t } } : body);
+      let rung = opts.noThinking ? working.get(model) ?? firstRung(model) : LADDER.length - 1;
+      let res = opts.noThinking ? await timed(model, withThinking(LADDER[rung]), RUNG_NAME[rung]) : await timed(model, body);
+      // A 400 means this model does not take that setting (or does not like the request): step down to the next one.
+      while (opts.noThinking && 'r' in res && res.r.status === 400 && rung < LADDER.length - 1) {
         const e = await res.r.clone().json().catch(() => null);
-        if (isThinkingError(res.r.status, String(e?.error?.message || ''))) res = await timed(model, body, 'retried without the thinking setting');
+        if (/api key/i.test(String(e?.error?.message || ''))) break;
+        rung++;
+        res = await timed(model, withThinking(LADDER[rung]), RUNG_NAME[rung]);
       }
+      if (opts.noThinking && 'r' in res && res.r.ok) working.set(model, rung);
 
       if ('err' in res) {
         last = res.err;

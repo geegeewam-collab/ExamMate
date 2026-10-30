@@ -155,7 +155,7 @@ test('assistant: the AI decides what is an instruction, however it is worded: no
     ["i didn't catch that", 'repeat', ['repeat']],
     ['ok i have that, skip ahead', 'next', ['next']],
     ['take me to the one before', 'back', ['back']],
-    ['hold on a sec', 'pause', []],
+    ['give me a moment to think', 'pause', []],
     ['alright carry on', 'resume', ['resume']],
     ['that is enough for today', 'stop', ['stop']],
     ['you are going too quick for me', 'slower', ['slower', 'resume']],
@@ -527,4 +527,31 @@ test('assistant: a failed ask still records the question, the reason and where t
   assert.equal(t.networkMs, 400);
   assert.deepEqual(t.server, server);
   assert.equal(t.feltMs, null);
+});
+
+/* ------------- plain commands never wait for the AI ------------- */
+test('assistant: a plain command is done on the phone at once, the AI is never asked', async () => {
+  for (const [said, expected] of [['faster', ['faster', 'resume']], ['pause', []], ['next', ['next']], ['slow down', ['slower', 'resume']]] as [string, string[]][]) {
+    const { a, rec, clock, log } = setup({ ask: async (q) => { log.push('ask:' + q); return { action: 'none', answer: 'should not be asked' }; } });
+    await a.enable({ wake: true });
+    rec.say('hey exam mate'); await settle();
+    rec.say(said, true); clock.advance(600); await settle();
+    assert.ok(!log.some((l) => l.startsWith('ask:')), 'no AI for: ' + said);
+    assert.deepEqual(log.filter((l) => ['next', 'repeat', 'back', 'stop', 'resume', 'slower', 'faster'].includes(l)), expected, said);
+    const t = a.getSnapshot().timing!;
+    assert.equal(t.local, true);
+    assert.equal(t.askMs, 0);
+    assert.equal(t.feltMs, 600, 'only the short wait after the engine said final');
+    assert.equal(a.getSnapshot().status, 'waiting');
+  }
+});
+
+test('assistant: a real question that merely contains a command word still goes to the AI', async () => {
+  const asked: string[] = [];
+  const { a, rec, clock } = setup({ ask: async (q) => { asked.push(q); return ANSWER; } });
+  await a.enable({ wake: true });
+  rec.say('hey exam mate'); await settle();
+  rec.say('what does faster mean in physics', true); clock.advance(600); await settle();
+  assert.deepEqual(asked, ['what does faster mean in physics']);
+  assert.equal(a.getSnapshot().timing!.local, false);
 });
