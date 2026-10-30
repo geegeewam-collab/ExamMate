@@ -104,6 +104,7 @@ export default function Shell({
       const t = (body ?? live.current.text).trim();
       if (!speechSupported()) return setMsg('This browser cannot read aloud. Open Exam Mate in Chrome, or use the Android app.');
       if (!engine.start(t, from)) return setMsg('Add some text first, or take a photo of the questions.');
+      assistantRef.current.resetConversation();
       lastText.current = t;
       setMsg('');
       startKeepAlive();

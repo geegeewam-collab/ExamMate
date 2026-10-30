@@ -67,6 +67,8 @@ export interface GenerateOptions {
   deadlineMs?: number;
   /** Ask the model to think as little as it can (fast spoken answers), using whichever setting that model accepts. */
   noThinking?: boolean;
+  /** Skip the extra model-list HTTP request; useful for latency-sensitive endpoints with explicit fallbacks. */
+  discoverModels?: boolean;
 }
 
 /**
@@ -127,7 +129,7 @@ export async function generate<T>(
   const tried = new Set<string>();
   const batches: (() => Promise<string[]>)[] = [];
   if (opts.models?.length) batches.push(async () => opts.models!);
-  batches.push(() => models(apiKey)); // only looked up if the preferred models did not work
+  if (opts.discoverModels !== false) batches.push(() => models(apiKey)); // only looked up when the caller allows discovery
 
   outer: for (const getBatch of batches) {
     for (const model of await getBatch()) {

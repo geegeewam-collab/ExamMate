@@ -33,7 +33,7 @@ export async function askQuestion(question: string, ctx: AskContext, signal?: Ab
   const tSend = Date.now();
   const prepMs = tSend - tStart; // licence header, device id and key lookups happen before anything is sent
   try {
-    res = await fetch(`${base}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question, context: ctx.context, current: ctx.current }), signal });
+    res = await fetch(`${base}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question, context: ctx.context, current: ctx.current, conversation: ctx.conversation ?? [] }), signal });
   } catch {
     throw new AskFailure("I couldn't reach the internet.", 'other', { timing: { prepMs, roundTripMs: Date.now() - tSend } });
   }

@@ -149,12 +149,43 @@ test('assistant: if the engine closes the session right after the wake phrase, a
   assert.ok(log.includes('ask:what is dna'));
 });
 
+test('assistant: remembers recent dialogue for follow-ups and can reset it for a new reading', async () => {
+  const received: { question: string; conversation: { role: 'user' | 'assistant'; text: string }[] }[] = [];
+  let answerNo = 0;
+  const { a, rec, clock } = setup({
+    ask: async (question, ctx) => {
+      received.push({ question, conversation: ctx.conversation ?? [] });
+      answerNo++;
+      return { action: 'none', answer: answerNo === 1 ? 'Photosynthesis is how plants make food.' : 'Sunlight supplies energy for the process.' };
+    },
+  });
+
+  await a.enable({ wake: true });
+  rec.say('hey exam mate'); await settle();
+  rec.say('what is photosynthesis', true); clock.advance(600); await settle();
+  rec.say('hey exam mate'); await settle();
+  rec.say('why does it need sunlight', true); clock.advance(600); await settle();
+
+  assert.equal(received.length, 2);
+  assert.deepEqual(received[0].conversation, [], 'the first question starts with no old dialogue');
+  assert.deepEqual(received[1].conversation, [
+    { role: 'user', text: 'what is photosynthesis' },
+    { role: 'assistant', text: 'Photosynthesis is how plants make food.' },
+  ]);
+
+  a.resetConversation();
+  rec.say('hey exam mate'); await settle();
+  rec.say('what was that again', true); clock.advance(600); await settle();
+  assert.deepEqual(received[2].conversation, [], 'a new reading session can start with a clean conversation');
+});
+
 test('assistant: the AI decides what is an instruction, however it is worded: no fixed phrases', async () => {
   const cases: [string, AskResult['action'], string[]][] = [
     ['could you try going faster', 'faster', ['faster', 'resume']],
     ["i didn't catch that", 'repeat', ['repeat']],
     ['ok i have that, skip ahead', 'next', ['next']],
     ['take me to the one before', 'back', ['back']],
+    ['we went past it, can you take me back please', 'back', ['back']],
     ['give me a moment to think', 'pause', []],
     ['alright carry on', 'resume', ['resume']],
     ['that is enough for today', 'stop', ['stop']],
@@ -222,14 +253,16 @@ test('assistant: a revoked license stops everything and tells the app', async ()
   assert.ok(!log.includes('resume'));
 });
 
-test('assistant: a hanging AI times out, says so, and the reader carries on', async () => {
-  const { a, rec, clock, log } = setup({ ask: () => new Promise(() => {}) });
+test('assistant: a hanging AI times out, aborts its network request, and the reader carries on', async () => {
+  let requestSignal: AbortSignal | undefined;
+  const { a, rec, clock, log } = setup({ ask: (_q, _ctx, signal) => { requestSignal = signal; return new Promise(() => {}); } });
   await a.enable({ wake: true });
   rec.say('hey exam mate'); await settle(); rec.say('what is dna', true); clock.advance(600); await settle();
   assert.equal(a.getSnapshot().status, 'thinking');
-  clock.advance(18_000); await settle();
+  clock.advance(28_000); await settle();
   assert.ok(log.some((l) => l.startsWith('speak:Sorry, that took too long')));
   assert.ok(log.includes('resume'));
+  assert.equal(requestSignal?.aborted, true, 'the timed-out fetch is cancelled instead of being left running');
 });
 
 test('assistant: "still thinking" appears when the AI is slow, and goes away with the answer', async () => {
@@ -283,12 +316,14 @@ test('assistant: ignores new triggers while busy, and when switched off', async 
   assert.equal(log.length, n, 'already listening: second trigger ignored');
 });
 
-test('assistant: disabling mid-question abandons it quietly', async () => {
+test('assistant: disabling mid-question cancels the request and abandons it quietly', async () => {
   let release!: (r: AskResult) => void;
-  const { a, rec, clock, log } = setup({ ask: () => new Promise<AskResult>((r) => { release = r; }) });
+  let requestSignal: AbortSignal | undefined;
+  const { a, rec, clock, log } = setup({ ask: (_q, _ctx, signal) => { requestSignal = signal; return new Promise<AskResult>((r) => { release = r; }); } });
   await a.enable({ wake: true });
   rec.say('hey exam mate'); await settle(); rec.say('what is dna', true); clock.advance(600); await settle();
   await a.disable();
+  assert.equal(requestSignal?.aborted, true, 'disabling the assistant aborts the in-flight API request');
   release({ action: 'none', answer: 'late answer' }); await settle();
   assert.ok(!log.some((l) => l.startsWith('speak:')));
   assert.equal(a.getSnapshot().status, 'off');

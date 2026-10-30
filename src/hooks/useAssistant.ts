@@ -76,7 +76,7 @@ export function useAssistant(a: Args): { assistant: VoiceAssistant; state: Assis
       attempt();
     }),
     cancelSpeech: () => speech.cancel(),
-    ask: (q, ctx) => askQuestion(q, ctx),
+    ask: (q, ctx, signal) => askQuestion(q, ctx, signal),
     warm: () => { void warmServer(); },
     context: () => live.current.getContext(),
     tones,

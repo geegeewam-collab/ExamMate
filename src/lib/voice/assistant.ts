@@ -16,7 +16,8 @@ export interface ReaderControl {
   faster(): void;
 }
 
-export interface AskContext { context: string; current: string }
+export interface ConversationTurn { role: 'user' | 'assistant'; text: string }
+export interface AskContext { context: string; current: string; conversation?: ConversationTurn[] }
 
 /** Where the server spent its time (milliseconds). `tries` lists every call made to Google, so a slow answer can be explained. */
 export interface ServerTiming {
@@ -51,7 +52,7 @@ export interface AssistantDeps {
   speak(text: string, onStart?: () => void): Promise<void>;
   cancelSpeech(): void;
   /** The AI works out what the person wants, however they word it. */
-  ask(question: string, ctx: AskContext): Promise<AskResult>;
+  ask(question: string, ctx: AskContext, signal?: AbortSignal): Promise<AskResult>;
   /** Wakes the server up while the person is still speaking, so the answer comes back sooner. */
   warm?(): void;
   context(): AskContext;
@@ -81,7 +82,7 @@ export interface AssistantOptions {
 
 export const DEFAULT_OPTIONS: AssistantOptions = {
   wakePhrase: 'hey exam mate', noSpeechMs: 6000, silenceMs: 1500, maxMs: 12000,
-  askTimeoutMs: 16000, slowMs: 3000, stopWaitMs: 900, readyDingMs: 900,
+  askTimeoutMs: 26000, slowMs: 3000, stopWaitMs: 900, readyDingMs: 900,
 };
 
 /** off: switched off. idle: ready (hold button works) but not listening for the wake phrase. waiting: listening for it. */
@@ -165,6 +166,21 @@ export class VoiceAssistant {
   private wake = false;
   private abortCapture: (() => void) | null = null;
   private resumeOnCancel = false;
+  private abortAsk: (() => void) | null = null;
+  private conversation: ConversationTurn[] = [];
+
+  /** Start a clean conversational memory when a new reading session is opened. */
+  resetConversation() { this.conversation = []; }
+
+  private remember(question: string, answer: string) {
+    const q = question.trim().slice(0, 700);
+    const a = answer.trim().slice(0, 700);
+    if (!q) return;
+    this.conversation.push({ role: 'user', text: q });
+    if (a) this.conversation.push({ role: 'assistant', text: a });
+    // Four recent exchanges are enough to resolve follow-ups without sending a large transcript.
+    this.conversation = this.conversation.slice(-8);
+  }
 
   constructor(private deps: AssistantDeps, private opts: AssistantOptions = DEFAULT_OPTIONS) {}
 
@@ -231,6 +247,8 @@ export class VoiceAssistant {
     this.live = null;
     this.clearTimers();
     this.abortCapture?.();
+    this.abortAsk?.();
+    this.abortAsk = null;
     this.deps.cancelSpeech();
     await this.stopRecognizer();
     this.set({ ...OFF, message: this.snap.message });
@@ -244,6 +262,8 @@ export class VoiceAssistant {
     this.live = null;
     this.clearTimers();
     this.abortCapture?.();
+    this.abortAsk?.();
+    this.abortAsk = null;
     this.deps.cancelSpeech();
     await this.stopRecognizer();
     this.resumeOnCancel = false;
@@ -343,6 +363,7 @@ export class VoiceAssistant {
       tm.feltMs = this.deps.clock.now() - cap.lastAt;
       this.deps.haptics?.finish();
       this.runCommand(plain, wasPlaying);
+      this.remember(question, this.commandConfirmation(plain));
       this.set({ transcript: question, answer: '', slow: false });
       this.publish(tm);
       return this.finish(g, false, '');
@@ -356,7 +377,8 @@ export class VoiceAssistant {
     let result: AskResult | null = null;
     let failure: AskFailure | null = null;
     try {
-      result = await this.withTimeout(this.deps.ask(question, this.deps.context()));
+      const ctx = this.deps.context();
+      result = await this.withTimeout((signal) => this.deps.ask(question, { ...ctx, conversation: this.conversation.slice(-8) }, signal));
     } catch (e) {
       failure = e instanceof AskFailure ? e : new AskFailure("Sorry, I couldn't get an answer.");
     }
@@ -399,12 +421,14 @@ export class VoiceAssistant {
       // The AI understood this as an instruction to the reader: just do it.
       this.deps.haptics?.finish();
       this.runCommand(result.action, wasPlaying);
+      this.remember(question, result.answer || this.commandConfirmation(result.action));
       tm.feltMs = this.deps.clock.now() - cap.lastAt;
       this.set({ answer: result.answer, ms: result.ms ?? 0, slow: false });
       this.publish(tm);
       return this.finish(g, false, result.answer);
     }
 
+    this.remember(question, result.answer);
     this.set({ status: 'speaking', answer: result.answer, ms: result.ms ?? 0, slow: false });
     const tSpeak = this.deps.clock.now();
     const onVoiceStart = () => {
@@ -427,6 +451,15 @@ export class VoiceAssistant {
     this.resumeOnCancel = false;
     if (resumeReader) this.deps.reader.resume(); // re-reads the phrase that was interrupted
     this.backToReady(message);
+  }
+
+  private commandConfirmation(cmd: Command): string {
+    const confirmations: Record<Command, string> = {
+      repeat: 'Repeated the current phrase.', next: 'Moved to the next phrase.', back: 'Moved to the previous phrase.',
+      pause: 'Paused the reader.', resume: 'Resumed reading.', stop: 'Stopped the reading session.',
+      slower: 'Reduced the reading speed.', faster: 'Increased the reading speed.',
+    };
+    return confirmations[cmd];
   }
 
   private runCommand(cmd: Command, wasPlaying: boolean) {
@@ -532,10 +565,31 @@ export class VoiceAssistant {
     });
   }
 
-  private withTimeout<T>(p: Promise<T>): Promise<T> {
+  private withTimeout<T>(ask: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
     return new Promise((resolve, reject) => {
-      const t = this.deps.clock.setTimeout(() => reject(new AskFailure('Sorry, that took too long. Try again.')), this.opts.askTimeoutMs);
-      p.then((v) => { this.deps.clock.clearTimeout(t); resolve(v); }, (e) => { this.deps.clock.clearTimeout(t); reject(e); });
+      let timer: unknown;
+      let settled = false;
+      const finalize = (finish: () => void) => {
+        if (settled) return;
+        settled = true;
+        this.deps.clock.clearTimeout(timer);
+        if (this.abortAsk === abort) this.abortAsk = null;
+        finish();
+      };
+      const abort = () => {
+        controller.abort();
+        finalize(() => reject(new AskFailure('The request was cancelled.')));
+      };
+      this.abortAsk = abort;
+      timer = this.deps.clock.setTimeout(() => {
+        controller.abort();
+        finalize(() => reject(new AskFailure('Sorry, that took too long. Try again.')));
+      }, this.opts.askTimeoutMs);
+      Promise.resolve().then(() => ask(controller.signal)).then(
+        (value) => finalize(() => resolve(value)),
+        (error) => finalize(() => reject(error)),
+      );
     });
   }
 }
