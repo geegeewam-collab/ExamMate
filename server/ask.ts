@@ -2,14 +2,15 @@ import { verify, type Store } from './license';
 import { json, secret } from './http';
 import { describeFailure, generate } from './gemini';
 
-const fail = (code: string, error: string, status: number, detail = '') =>
-  json({ code, error, detail: String(detail).slice(0, 240) }, status);
+const fail = (code: string, error: string, status: number, detail = '', extra: Record<string, unknown> = {}) =>
+  json({ code, error, detail: String(detail).slice(0, 240), ...extra }, status);
 
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,200}$/;
 
-// A spoken answer has to be quick: one call may take at most 9 s, and the whole question at most 16 s (the app waits 20 s).
-export const ASK_CALL_MS = 9_000;
-export const ASK_TOTAL_MS = 16_000;
+// A spoken answer has to be quick. Gemini normally replies in about a second, so a call that is silent after 5 s is stuck:
+// give up on it and try the next model. The whole question gets 9 s (the app waits 11 s).
+export const ASK_CALL_MS = 5_000;
+export const ASK_TOTAL_MS = 9_000;
 
 export const ACTIONS = ['none', 'repeat', 'next', 'back', 'pause', 'resume', 'stop', 'slower', 'faster'] as const;
 export type Action = (typeof ACTIONS)[number];
@@ -110,5 +111,5 @@ export async function handleAsk(req: Request, store: Store): Promise<Response> {
   const timing = { verifyMs, limitMs, aiMs, totalMs: Date.now() - t0, tries: out.trace };
   if (out.ok) return json({ action: out.value.action, answer: out.value.answer, model: out.model, ms: timing.totalMs, timing });
   const f = describeFailure(out.last, auth.owner);
-  return fail(f.code, f.error.replace('The photo could not be processed. Try again, or try a clearer photo.', 'I could not get an answer. Try again.'), f.status, out.last.msg);
+  return fail(f.code, f.error.replace('The photo could not be processed. Try again, or try a clearer photo.', 'I could not get an answer. Try again.'), f.status, out.last.msg, { timing });
 }

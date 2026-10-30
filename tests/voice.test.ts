@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { matchWake, parseCommand, wakePhrase, normalize } from '../src/lib/voice/wake';
+import { matchWake, parseCommand, wakePhrase, normalize, dropWakeWords } from '../src/lib/voice/wake';
 import { createNativeRecognizer, createWebRecognizer, type Recognizer, type RecognizerHandlers } from '../src/lib/voice/recognizer';
 import { AskFailure, VoiceAssistant, type AskResult, type AssistantDeps, type ReaderControl } from '../src/lib/voice/assistant';
 import { FakeClock } from './helpers';
@@ -61,7 +61,7 @@ class FakeRecognizer implements Recognizer {
   async start(h: RecognizerHandlers) { this.starts++; this.h = h; }
   async stop() { this.stops++; }
   ready() { this.h?.onReady?.(); }
-  say(text: string, final = false) { this.h?.onText(text, final); }
+  say(text: string, final = false, segment?: number) { this.h?.onText(text, final, segment); }
   end(reason: 'ended' | 'no-speech' | 'denied' | 'unavailable' | 'error' = 'ended') { const h = this.h; this.h = null; h?.onEnd(reason); }
 }
 
@@ -478,4 +478,53 @@ test('timing: cleared when the next question starts, and when the assistant is s
   assert.equal(a.getSnapshot().timing, null, 'a new question starts from nothing');
   await a.disable();
   assert.equal(a.getSnapshot().timing, null);
+});
+
+/* ------------- the wake phrase must never be sent to the AI as the question ------------- */
+test('wake: words from the wake phrase\'s own utterance are dropped, however the engine revises them', () => {
+  assert.equal(matchWake('hey a x mate', 'hey exam mate').matched, false, 'the revision no longer matches the wake phrase');
+  assert.equal(dropWakeWords('hey a x mate', 'hey exam mate', 3), '', 'one more word than first heard');
+  assert.equal(dropWakeWords('hey body', 'hey buddy', 2), '', 'one word changed');
+  assert.equal(dropWakeWords('hey exam mate', 'hey exam mate', 3), '', 'unchanged');
+  assert.equal(dropWakeWords('hey a x mate what is dna', 'hey exam mate', 3), 'what is dna', 'the question after it is kept');
+  assert.equal(dropWakeWords('hey body what is dna', 'hey buddy', 2), 'what is dna');
+});
+
+test('assistant: the engine revising the wake phrase is not taken as the question, the real question still is', async () => {
+  const asked: string[] = [];
+  const { a, rec, clock } = setup({ ask: async (q) => { asked.push(q); return ANSWER; } });
+  await a.enable({ wake: true });
+  rec.say('hey exam mate', false, 0); await settle();
+  rec.say('hey a x mate', false, 0); await settle(); // the same words, heard differently
+  clock.advance(1500); await settle();
+  assert.deepEqual(asked, [], 'nothing was sent: that was only the wake phrase');
+  assert.equal(a.getSnapshot().status, 'listening', 'still waiting for the question');
+  rec.say('what is dna', true, 1); await settle(); // the next utterance
+  clock.advance(600); await settle();
+  assert.deepEqual(asked, ['what is dna']);
+  assert.equal(a.getSnapshot().timing!.question, 'what is dna');
+});
+
+test('assistant: a revised wake phrase followed by the question in the same breath sends only the question', async () => {
+  const asked: string[] = [];
+  const { a, rec, clock } = setup({ ask: async (q) => { asked.push(q); return ANSWER; } });
+  await a.enable({ wake: true });
+  rec.say('hey exam mate', false, 0); await settle();
+  rec.say('hey a x mate what is dna', false, 0); await settle();
+  clock.advance(1500); await settle();
+  assert.deepEqual(asked, ['what is dna']);
+});
+
+test('assistant: a failed ask still records the question, the reason and where the time went', async () => {
+  const server = { verifyMs: 100, limitMs: 80, aiMs: 5000, totalMs: 5200, tries: [{ model: 'gemini-flash-lite-latest', status: 504, ms: 5000 }] };
+  const { a, rec, clock } = setup({ ask: async () => { throw new AskFailure('The AI is taking too long right now. Try again in a moment.', 'other', { detail: 'gemini-flash-lite-latest: took too long', timing: { prepMs: 30, roundTripMs: 5600, server } }); } });
+  await a.enable({ wake: true });
+  rec.say('hey exam mate what is dna', false, 0); await settle();
+  clock.advance(1500); await settle();
+  const t = a.getSnapshot().timing!;
+  assert.equal(t.question, 'what is dna');
+  assert.match(t.error!, /taking too long.*took too long/);
+  assert.equal(t.networkMs, 400);
+  assert.deepEqual(t.server, server);
+  assert.equal(t.feltMs, null);
 });

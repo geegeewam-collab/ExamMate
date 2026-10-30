@@ -459,3 +459,14 @@ test('ask: reports where the server spent its time, including every call made to
   assert.equal(d.ms, d.timing.totalMs);
   assert.deepEqual(d.timing.tries.map((x: any) => [x.status, x.note ?? '']), [[400, ''], [200, 'retried without the thinking setting']], 'a retry without thinking is visible, because it makes the answer slow');
 });
+
+test('ask: when Google fails, the failure still says how long each call took, so a slow or stuck AI can be told apart from a bad question', async () => {
+  const { st, h } = await activated();
+  fakeAsk(() => google(500, 'backend error'));
+  const res = await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st);
+  assert.ok(res.status >= 400);
+  const d = await res.json();
+  assert.ok(Array.isArray(d.timing?.tries) && d.timing.tries.length >= 1);
+  assert.ok(d.timing.tries.every((x: any) => x.status === 500 && typeof x.ms === 'number' && x.model));
+  assert.equal(typeof d.timing.totalMs, 'number');
+});

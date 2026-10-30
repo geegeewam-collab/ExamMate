@@ -1,6 +1,6 @@
 import type { Clock } from '../engine';
 import type { Recognizer } from './recognizer';
-import { matchWake, parseCommand, type Command } from './wake';
+import { dropWakeWords, matchWake, normalize, parseCommand, type Command } from './wake';
 
 /** What the assistant needs to control while it listens. */
 export interface ReaderControl {
@@ -37,7 +37,8 @@ export interface AskResult {
 
 /** Thrown by the ask function. `license` means access was revoked; `key` means the Gemini key needs attention. */
 export class AskFailure extends Error {
-  constructor(message: string, public readonly kind: 'license' | 'key' | 'other' = 'other') {
+  /** `timing` and `detail` say where the time went and what Google said, so a failure can be explained (shown to the owner). */
+  constructor(message: string, public readonly kind: 'license' | 'key' | 'other' = 'other', public readonly extra: { timing?: AskTiming; detail?: string } = {}) {
     super(message);
   }
 }
@@ -80,7 +81,7 @@ export interface AssistantOptions {
 
 export const DEFAULT_OPTIONS: AssistantOptions = {
   wakePhrase: 'hey exam mate', noSpeechMs: 6000, silenceMs: 1500, maxMs: 12000,
-  askTimeoutMs: 18000, slowMs: 5000, stopWaitMs: 900, readyDingMs: 900,
+  askTimeoutMs: 11000, slowMs: 3000, stopWaitMs: 900, readyDingMs: 900,
 };
 
 /** off: switched off. idle: ready (hold button works) but not listening for the wake phrase. waiting: listening for it. */
@@ -116,6 +117,10 @@ export interface TurnTiming {
   voiceMs: number | null;
   /** What it feels like: last word heard -> the answer starts (or the command runs). */
   feltMs: number | null;
+  /** The exact words that were sent to the AI. */
+  question: string;
+  /** Why the AI could not answer, if it could not. */
+  error: string | null;
 }
 
 export interface AssistantSnapshot {
@@ -137,7 +142,9 @@ const OFF: AssistantSnapshot = { status: 'off', enabled: false, transcript: '', 
 /** What `capture` hands back: what was said, and when each thing happened (clock times). */
 interface Captured { text: string; reason: CaptureEnd; micAt: number | null; firstAt: number; lastAt: number; endedAt: number }
 
-interface LiveSession { sess: number; onText(text: string, final: boolean): void; onEnd(): void }
+interface LiveSession { sess: number; onText(text: string, final: boolean, segment?: number): void; onEnd(): void }
+/** What the wake match left behind: which utterance it was in, and the words it used up (as first heard). */
+interface WakeInfo { segment?: number; used: number; heard: string }
 
 /**
  * Siri-style helper for the reader. When it hears the wake phrase (or is triggered by the hold button):
@@ -275,12 +282,12 @@ export class VoiceAssistant {
       this.later(() => { if (g === this.gen && this.snap.status === 'waiting') this.listenForWake(); }, this.restartDelay);
     };
     rec.start({
-      onText: (text, final) => {
+      onText: (text, final, segment) => {
         // once the wake phrase is heard, this very session carries on listening for the question
-        if (this.live && this.live.sess === sess) { this.live.onText(text, final); return; }
+        if (this.live && this.live.sess === sess) { this.live.onText(text, final, segment); return; }
         if (g !== this.gen || this.snap.status !== 'waiting') return;
         const m = matchWake(text, this.opts.wakePhrase);
-        if (m.matched) void this.trigger('wake', m.rest, sess);
+        if (m.matched) void this.trigger('wake', m.rest, sess, { segment, used: m.used, heard: normalize(text).split(' ').filter(Boolean).slice(0, m.used).join(' ') });
       },
       onEnd: (reason) => {
         if (this.live && this.live.sess === sess) { this.live.onEnd(); return; }
@@ -290,7 +297,7 @@ export class VoiceAssistant {
   }
 
   /* ---------------- one request, start to finish ---------------- */
-  async trigger(source: TriggerSource, seed = '', liveSess?: number) {
+  async trigger(source: TriggerSource, seed = '', liveSess?: number, wake?: WakeInfo) {
     if (!this.snap.enabled) return;
     if (this.snap.status !== 'waiting' && this.snap.status !== 'idle') return; // already busy
     const g = ++this.gen;
@@ -309,7 +316,7 @@ export class VoiceAssistant {
     this.deps.cancelSpeech();
     this.set({ status: 'listening', transcript: '', answer: '', message: '', slow: false, ms: 0, timing: null });
 
-    const cap = await this.capture(g, liveSess !== undefined ? { sess: liveSess, seed } : undefined);
+    const cap = await this.capture(g, liveSess !== undefined ? { sess: liveSess, seed, segment: wake?.segment, used: wake?.used ?? 0, heard: wake?.heard ?? '' } : undefined);
     if (g !== this.gen) return;
     const question = cap.text;
 
@@ -324,6 +331,7 @@ export class VoiceAssistant {
       source, micMs: cap.micAt === null ? null : cap.micAt - tTrigger, talkMs: cap.lastAt - cap.firstAt,
       endWaitMs: cap.endedAt - cap.lastAt, endedBy: cap.reason,
       askMs: null, prepMs: null, roundTripMs: null, networkMs: null, server: null, voiceMs: null, feltMs: null,
+      question, error: null,
     };
     this.set({ transcript: question, status: 'thinking' });
     this.deps.haptics?.thinking();
@@ -343,7 +351,8 @@ export class VoiceAssistant {
 
     const tAnswered = this.deps.clock.now();
     tm.askMs = tAnswered - cap.endedAt;
-    const t = result?.timing;
+    const t = result?.timing ?? failure?.extra.timing;
+    if (failure) tm.error = failure.extra.detail ? `${failure.message} (${failure.extra.detail})` : failure.message;
     if (t) {
       tm.prepMs = t.prepMs;
       tm.roundTripMs = t.roundTripMs;
@@ -424,7 +433,7 @@ export class VoiceAssistant {
    * Listens until the person stops talking and resolves with what was said ('' if nothing).
    * After the wake phrase it keeps using the same listening session, so nothing is lost while restarting.
    */
-  private capture(g: number, live?: { sess: number; seed: string }): Promise<Captured> {
+  private capture(g: number, live?: { sess: number; seed: string; segment?: number; used: number; heard: string }): Promise<Captured> {
     return new Promise((resolve) => {
       const clock = this.deps.clock;
       const rec = this.deps.recognizer;
@@ -439,6 +448,7 @@ export class VoiceAssistant {
       let micAt: number | null = null;
       let firstAt: number | null = heard ? t0 : null;
       let lastAt = t0; // when the words last changed
+      let inWakeSession = live !== undefined; // while true, a text may still begin with the wake phrase
 
       const ding = () => {
         if (dinged) return;
@@ -467,10 +477,16 @@ export class VoiceAssistant {
         clock.clearTimeout(silence);
         silence = clock.setTimeout(() => finish(final ? 'final' : 'silence'), final ? 600 : this.opts.silenceMs);
       };
-      const onText = (text: string, final: boolean) => {
+      const onText = (text: string, final: boolean, segment?: number) => {
         if (done || g !== this.gen) return;
         const m = matchWake(text, this.opts.wakePhrase);
-        const q = (m.matched ? m.rest : text).trim();
+        let body: string;
+        if (m.matched) body = m.rest;
+        // The engine often revises the phrase it already matched ("hey buddy" becomes "hey body"). That is the same utterance,
+        // so skip the words the wake phrase used instead of sending the wake phrase to the AI as the question.
+        else if (inWakeSession && live && segment !== undefined && segment === live.segment) body = dropWakeWords(text, live.heard, live.used);
+        else body = text;
+        const q = body.trim();
         if (!q) return; // still only the wake phrase
         if (q !== last) { // the clock only moves when the words change, so "wait for you to finish" is measured from your last new word
           lastAt = clock.now();
@@ -483,6 +499,7 @@ export class VoiceAssistant {
       };
       const startFresh = () => {
         this.live = null;
+        inWakeSession = false; // a brand-new session never contains the wake phrase
         ready = this.later(ding, this.opts.readyDingMs); // if the engine never says "ready", ding anyway
         rec.start({
           onReady: () => { this.cancelLater(ready); ding(); },

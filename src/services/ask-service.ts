@@ -35,14 +35,15 @@ export async function askQuestion(question: string, ctx: AskContext, signal?: Ab
   try {
     res = await fetch(`${base}/api/ask`, { method: 'POST', headers, body: JSON.stringify({ question, context: ctx.context, current: ctx.current }), signal });
   } catch {
-    throw new AskFailure("I couldn't reach the internet.");
+    throw new AskFailure("I couldn't reach the internet.", 'other', { timing: { prepMs, roundTripMs: Date.now() - tSend } });
   }
   const data = await res.json().catch(() => ({}));
   const roundTripMs = Date.now() - tSend;
   if (!res.ok) {
-    if (data.code === 'license') throw new AskFailure(data.error || 'License not valid.', 'license');
-    if (data.code === 'need_key' || data.code === 'student_key') throw new AskFailure(data.error || 'Check your Gemini key.', 'key');
-    throw new AskFailure(data.error || "Sorry, I couldn't get an answer.");
+    const extra = { timing: { prepMs, roundTripMs, server: readServerTiming(data.timing) }, detail: typeof data.detail === 'string' ? data.detail : undefined };
+    if (data.code === 'license') throw new AskFailure(data.error || 'License not valid.', 'license', extra);
+    if (data.code === 'need_key' || data.code === 'student_key') throw new AskFailure(data.error || 'Check your Gemini key.', 'key', extra);
+    throw new AskFailure(data.error || "Sorry, I couldn't get an answer.", 'other', extra);
   }
   const action = ACTIONS.includes(data.action) ? data.action : 'none';
   const answer = String(data.answer || '').trim();

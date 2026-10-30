@@ -34,7 +34,8 @@ export function wakePhrase(choice: WakeChoice, custom: string): string {
   return WAKE_PRESETS[choice]?.phrase ?? WAKE_PRESETS.exam.phrase;
 }
 
-export interface WakeMatch { matched: boolean; rest: string }
+/** `used` = how many words of the transcript the wake phrase (and anything said before it) took up. */
+export interface WakeMatch { matched: boolean; rest: string; used: number }
 
 /**
  * Does the transcript contain the wake phrase? Tolerates small mis-hearings ("exam mate", "examate", "x am mate").
@@ -43,7 +44,7 @@ export interface WakeMatch { matched: boolean; rest: string }
 export function matchWake(transcript: string, phrase: string): WakeMatch {
   const t = normalize(transcript).split(' ').filter(Boolean);
   let p = normalize(phrase).split(' ').filter(Boolean);
-  if (!t.length || !p.length) return { matched: false, rest: '' };
+  if (!t.length || !p.length) return { matched: false, rest: '', used: 0 };
   if (p.length >= 3 && GREETINGS.includes(p[0])) p = p.slice(1);
   const target = p.join('');
   const tol = tolerance(target.length);
@@ -56,9 +57,26 @@ export function matchWake(transcript: string, phrase: string): WakeMatch {
       const d = lev(win, target);
       if (d <= tol && (!best || d < best.d || (d === best.d && len > best.len))) best = { len, d };
     }
-    if (best) return { matched: true, rest: t.slice(start + best.len).join(' ') };
+    if (best) return { matched: true, rest: t.slice(start + best.len).join(' '), used: start + best.len };
   }
-  return { matched: false, rest: '' };
+  return { matched: false, rest: '', used: 0 };
+}
+
+/**
+ * The engine often revises what it already heard ("hey buddy" becomes "hey body", or "hey a x mate"). For a later transcript of the
+ * SAME utterance, remove the wake words from the start and return what was said after them. `heard` is the wake words as first
+ * heard and `used` how many words that was; the cut is placed where the start best resembles `heard`, give or take one word.
+ */
+export function dropWakeWords(transcript: string, heard: string, used: number): string {
+  const t = normalize(transcript).split(' ').filter(Boolean);
+  const w = heard.replace(/ /g, '');
+  let cut = Math.min(used, t.length);
+  let bestD = Infinity;
+  for (let n = Math.max(1, used - 1); n <= Math.min(used + 1, t.length); n++) {
+    const d = lev(t.slice(0, n).join(''), w);
+    if (d < bestD || (d === bestD && n === used)) { bestD = d; cut = n; }
+  }
+  return t.slice(cut).join(' ');
 }
 
 export type Command = 'repeat' | 'next' | 'back' | 'pause' | 'resume' | 'stop' | 'slower' | 'faster';

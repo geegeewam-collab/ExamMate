@@ -49,6 +49,8 @@ function TimingCard({ t }: { t: TurnTiming }) {
           Gemini: {s.tries.map((x) => `${x.model.replace(/^gemini-/, '')} → ${x.status || 'no reply'} in ${secs(x.ms)}${x.note ? ` (${x.note})` : ''}`).join('  then  ')}
         </p>
       )}
+      <p className="tries">Sent to the AI: &ldquo;{t.question}&rdquo;</p>
+      {t.error && <p className="tries">Failed: {t.error}</p>}
       <p className="tries">Mic open {secs(t.micMs)} · you talked {secs(t.talkMs)}</p>
       {native && <p className="tries">*Android&apos;s voice gives no start signal, so its own start-up is not counted.</p>}
     </div>

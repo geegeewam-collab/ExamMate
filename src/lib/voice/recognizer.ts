@@ -6,7 +6,8 @@ export interface RecognizerHandlers {
   /** Called once when the microphone is really open (so a "ding" means "speak now" and no words are lost). */
   onReady?(): void;
   /** Called with the latest transcript (interim while speaking, final when the engine is sure). */
-  onText(text: string, final: boolean): void;
+  /** `segment` numbers the utterance inside one session (the browser keeps one session open and numbers each phrase). Absent when the engine does not say. */
+  onText(text: string, final: boolean, segment?: number): void;
   /** Called once when this listening session is over. */
   onEnd(reason: EndReason, detail?: string): void;
 }
@@ -59,7 +60,7 @@ export function createWebRecognizer(w: any, lang: string): Recognizer | null {
       r.onresult = (e: any) => {
         markReady();
         const res = e.results[e.results.length - 1];
-        if (res && res[0]) h.onText(String(res[0].transcript), !!res.isFinal);
+        if (res && res[0]) h.onText(String(res[0].transcript), !!res.isFinal, e.results.length - 1);
       };
       r.onerror = (e: any) => {
         const c = String(e.error || '');
@@ -120,7 +121,7 @@ export function createNativeRecognizer(SR: NativePlugin, lang: string): Recogniz
       };
       handles.push(await SR.addListener('partialResults', (d) => {
         const t = d?.matches?.[0];
-        if (t) h.onText(String(t), false);
+        if (t) h.onText(String(t), false, 0); // one native session = one utterance, and each partial holds everything said so far
       }));
       handles.push(await SR.addListener('listeningState', (d) => {
         if (d?.status === 'started') h.onReady?.();
@@ -129,7 +130,7 @@ export function createNativeRecognizer(SR: NativePlugin, lang: string): Recogniz
       try {
         const res = await SR.start({ language: lang, maxResults: 1, partialResults: true, popup: false });
         const t = res?.matches?.[0];
-        if (t) h.onText(String(t), true); // some versions return the final text here
+        if (t) h.onText(String(t), true, 0); // some versions return the final text here
       } catch (e) {
         const m = String((e as any)?.message || e);
         end(/permission|denied/i.test(m) ? 'denied' : 'error', m);
