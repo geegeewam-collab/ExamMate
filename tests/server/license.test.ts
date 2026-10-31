@@ -1,9 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activate, verify, createLicenses, readToken, newKey } from '../../server/license';
+import { activate, verify, createLicenses, readToken, newKey, parseDeviceClaimResult } from '../../server/license';
 import { memoryStore } from './memory-store';
 
 const S = 'test-secret';
+
+test('atomic device-claim tuple decoder handles statuses and validates license payloads', async () => {
+  const license = {
+    key: 'EXAM-AAAA-BBBB-CCCC', label: 'Test', status: 'active' as const,
+    maxDevices: 2, devices: ['device-phone-1'], createdAt: '2026-10-31T00:00:00.000Z',
+  };
+  assert.deepEqual(parseDeviceClaimResult(['missing']), { status: 'missing' });
+  assert.deepEqual(parseDeviceClaimResult(['revoked']), { status: 'revoked' });
+  assert.deepEqual(parseDeviceClaimResult(['limit']), { status: 'limit' });
+  assert.deepEqual(parseDeviceClaimResult(['ok', JSON.stringify(license)]), { status: 'ok', license });
+  assert.throws(() => parseDeviceClaimResult('not-an-array'), /invalid response/i);
+  assert.throws(() => parseDeviceClaimResult(['ok']), /no license data/i);
+  assert.throws(() => parseDeviceClaimResult(['ok', '{bad json']), /JSON/i);
+  assert.throws(() => parseDeviceClaimResult(['ok', JSON.stringify({ key: 'bad' })]), /malformed license/i);
+  assert.throws(() => parseDeviceClaimResult(['unknown']), /unexpected/i);
+});
 
 test('keys look like EXAM-XXXX-XXXX-XXXX and are unique', () => {
   const ks = new Set(Array.from({ length: 200 }, newKey));

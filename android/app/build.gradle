@@ -8,8 +8,8 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // The GitHub workflow passes these so every release gets a higher version number (needed for updates)
-        versionCode = Integer.parseInt((project.findProperty('appVersionCode') ?: '6').toString())
-        versionName = (project.findProperty('appVersionName') ?: '2.1.4').toString()
+        versionCode = Integer.parseInt((project.findProperty('appVersionCode') ?: '7').toString())
+        versionName = (project.findProperty('appVersionName') ?: '2.1.5').toString()
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

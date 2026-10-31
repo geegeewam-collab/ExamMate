@@ -1,27 +1,27 @@
 import { Redis } from '@upstash/redis';
-import type { DeviceClaim, License, Store } from './license';
+import { parseDeviceClaimResult, type DeviceClaim, type License, type Store } from './license';
 
 let r: Redis | null = null;
 
 // One Redis-side atomic operation prevents concurrent first activations from exceeding maxDevices.
 const CLAIM_DEVICE_SCRIPT = `
 local raw = redis.call('GET', KEYS[1])
-if not raw then return cjson.encode({ status = 'missing' }) end
+if not raw then return {'missing'} end
 local lic = cjson.decode(raw)
-if lic.status ~= 'active' then return cjson.encode({ status = 'revoked' }) end
+if lic.status ~= 'active' then return {'revoked'} end
 local devices = lic.devices or {}
 for i = 1, #devices do
   if devices[i] == ARGV[1] then
-    return cjson.encode({ status = 'ok', license = lic })
+    return {'ok', cjson.encode(lic)}
   end
 end
 local maximum = tonumber(lic.maxDevices) or 1
-if #devices >= maximum then return cjson.encode({ status = 'limit' }) end
+if #devices >= maximum then return {'limit'} end
 table.insert(devices, ARGV[1])
 lic.devices = devices
 if not lic.activatedAt or lic.activatedAt == cjson.null then lic.activatedAt = ARGV[2] end
 redis.call('SET', KEYS[1], cjson.encode(lic))
-return cjson.encode({ status = 'ok', license = lic })
+return {'ok', cjson.encode(lic)}
 `;
 const db = () =>
   (r ??= new Redis({
@@ -48,9 +48,14 @@ export const store: Store = {
     return rows.filter((x): x is License => !!x);
   },
   async claimDevice(key, deviceId): Promise<DeviceClaim> {
-    const raw = await db().eval<string>(CLAIM_DEVICE_SCRIPT, ['lic:' + key], [deviceId, new Date().toISOString()]);
-    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return result as DeviceClaim;
+    // @upstash/redis constrains EVAL's result generic to unknown[]. The Lua
+    // script returns a Redis array, not a top-level JSON string.
+    const result = await db().eval<[string, string?]>(
+      CLAIM_DEVICE_SCRIPT,
+      ['lic:' + key],
+      [deviceId, new Date().toISOString()],
+    );
+    return parseDeviceClaimResult(result);
   },
   async hit(key, ttlSec, delta = 1) {
     const k = 'hit:' + key;

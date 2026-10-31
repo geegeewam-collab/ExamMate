@@ -14,6 +14,39 @@ export type DeviceClaim =
   | { status: 'ok'; license: License }
   | { status: 'missing' | 'revoked' | 'limit' };
 
+/** Decode the tuple returned by the atomic Redis device-claim Lua script. */
+export function parseDeviceClaimResult(raw: unknown): DeviceClaim {
+  if (!Array.isArray(raw) || typeof raw[0] !== 'string') {
+    throw new Error('Atomic device claim returned an invalid response.');
+  }
+
+  const [status, serializedLicense] = raw as [string, unknown?];
+  switch (status) {
+    case 'missing':
+    case 'revoked':
+    case 'limit':
+      return { status };
+    case 'ok': {
+      if (typeof serializedLicense !== 'string' || !serializedLicense) {
+        throw new Error('Atomic device claim returned no license data.');
+      }
+      const parsed: unknown = JSON.parse(serializedLicense);
+      if (
+        !parsed || typeof parsed !== 'object' || Array.isArray(parsed) ||
+        typeof (parsed as License).key !== 'string' ||
+        ((parsed as License).status !== 'active' && (parsed as License).status !== 'revoked') ||
+        !Array.isArray((parsed as License).devices) ||
+        typeof (parsed as License).maxDevices !== 'number'
+      ) {
+        throw new Error('Atomic device claim returned malformed license data.');
+      }
+      return { status: 'ok', license: parsed as License };
+    }
+    default:
+      throw new Error(`Unexpected atomic device claim status: ${status}`);
+  }
+}
+
 export interface Store {
   get(key: string): Promise<License | null>;
   put(lic: License): Promise<void>;

@@ -35,5 +35,5 @@
     "@types/react-dom": "^19",
     "typescript": "^5"
   },
-  "version": "2.1.4"
+  "version": "2.1.5"
 }
