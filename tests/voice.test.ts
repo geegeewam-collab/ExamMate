@@ -1,3 +1,4 @@
+import { matchRecognitionLocale } from '../src/lib/voice/recognizer';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { matchWake, parseCommand, wakePhrase, normalize, dropWakeWords } from '../src/lib/voice/wake';
@@ -43,10 +44,10 @@ test('wake: normalize strips punctuation, accents and apostrophes', () => {
 
 test('commands: whole-utterance commands only', () => {
   const cases: [string, string | null][] = [
-    ['repeat', 'repeat'], ['repeat that please', 'repeat'], ['say that again', 'repeat'], ['next', 'next'], ['skip', 'next'], ['move on', 'next'],
+    ['repeat', 'repeat'], ['repeat that please', 'repeat'], ["i didn't catch that", 'repeat'], ['say that again', 'repeat'], ['next', 'next'], ['skip', 'next'], ['move on', 'next'],
     ['go back', 'back'], ['previous', 'back'], ['pause', 'pause'], ['hold on', 'pause'], ['wait a second', 'pause'],
     ['continue', 'resume'], ['carry on', 'resume'], ["that's enough", 'stop'], ['stop reading', 'stop'], ['slow down', 'slower'], ['faster', 'faster'],
-    ['what is the next step in mitosis', null], ['why did the reader skip the question about water', null], ['explain photosynthesis', null], ['', null],
+    ['what is the next step in mitosis', null], ['go back in the explanation', null], ['please move to the next section', 'next'], ['take me to the previous part', 'back'], ['repeat the current phrase', 'repeat'], ['wait a moment', 'pause'], ['keep going', 'resume'], ['go back in the text', 'back'], ['say that one more time', 'repeat'], ['speed it up', 'faster'], ['a bit slower', 'slower'], ['you are speaking too quickly', null], ['why did the reader skip the question about water', null], ['explain photosynthesis', null], ['', null],
   ];
   for (const [said, want] of cases) assert.equal(parseCommand(said), want, said);
 });
@@ -182,7 +183,6 @@ test('assistant: remembers recent dialogue for follow-ups and can reset it for a
 test('assistant: the AI decides what is an instruction, however it is worded: no fixed phrases', async () => {
   const cases: [string, AskResult['action'], string[]][] = [
     ['could you try going faster', 'faster', ['faster', 'resume']],
-    ["i didn't catch that", 'repeat', ['repeat']],
     ['ok i have that, skip ahead', 'next', ['next']],
     ['take me to the one before', 'back', ['back']],
     ['we went past it, can you take me back please', 'back', ['back']],
@@ -390,27 +390,31 @@ test('web recognizer: maps results and errors', async () => {
 
 test('native recognizer: partial results, stop event, final result, permissions', async () => {
   const listeners = new Map<string, (d: any) => void>();
-  let startArgs: any; let startResult: any = {}; let startError: Error | null = null;
+  let startArgs: any; let availableCalls = 0; let startResult: any = {}; let startError: Error | null = null;
   const plugin = {
-    available: async () => ({ available: true }),
+    available: async () => { availableCalls++; return { available: true }; },
     requestPermissions: async () => ({ speechRecognition: 'granted' }),
     start: async (o: any) => { startArgs = o; if (startError) throw startError; return startResult; },
     stop: async () => {},
+    forceStop: async (options: any) => { assert.equal(options.timeout, 1500); },
     addListener: async (ev: string, cb: (d: any) => void) => { listeners.set(ev, cb); return { remove: async () => { listeners.delete(ev); } }; },
   };
   const r = createNativeRecognizer(plugin, 'en-US');
   assert.equal(await r.available(), true);
+  assert.equal(availableCalls, 1, 'use the plugin documented availability check');
   assert.equal(await r.requestPermission(), true);
   const got: any[] = [];
   await r.start({ onText: (t, f) => got.push([t, f]), onEnd: (why) => got.push(['end', why]) });
   assert.deepEqual([startArgs.partialResults, startArgs.popup, startArgs.language], [true, false, 'en-US']);
+  assert.equal('addPunctuation' in startArgs, false, 'do not force the iOS on-device punctuation path on unsupported locales');
   listeners.get('partialResults')!({ matches: ['hey exam'] });
   listeners.get('listeningState')!({ status: 'stopped' });
   assert.deepEqual(got, [['hey exam', false], ['end', 'ended']]);
 
   startResult = { matches: ['final words'] }; got.length = 0;
   await r.start({ onText: (t, f) => got.push([t, f]), onEnd: () => {} });
-  assert.deepEqual(got, [['final words', true]]);
+  assert.deepEqual(got, [['final words', false]], 'partialResults sessions can resolve start() immediately, so its payload is not treated as final');
+  await r.stop();
 
   startError = new Error('Missing permission'); got.length = 0;
   await r.start({ onText: () => {}, onEnd: (why) => got.push(why) });
@@ -589,4 +593,45 @@ test('assistant: a real question that merely contains a command word still goes 
   rec.say('what does faster mean in physics', true); clock.advance(600); await settle();
   assert.deepEqual(asked, ['what does faster mean in physics']);
   assert.equal(a.getSnapshot().timing!.local, false);
+});
+
+
+test('native recognizer treats unsupported locale errors as unavailable instead of retrying forever', async () => {
+  const listeners = new Map<string, (d: any) => void>();
+  const plugin = {
+    available: async () => ({ available: true }),
+    requestPermissions: async () => ({ speechRecognition: 'granted' }),
+    start: async () => { throw new Error('LANGUAGE_NOT_SUPPORTED'); },
+    stop: async () => {},
+    addListener: async (event: string, callback: (data: any) => void) => { listeners.set(event, callback); return { remove: async () => {} }; },
+  };
+  const recognizer = createNativeRecognizer(plugin, 'sw-KE');
+  const ended: string[] = [];
+  await recognizer.start({ onText: () => {}, onEnd: (reason) => ended.push(reason) });
+  assert.deepEqual(ended, ['unavailable']);
+});
+
+test('native recognizer chooses a supported same-language locale and checks it with the OS', async () => {
+  const listeners = new Map<string, (d: any) => void>();
+  let startOptions: any;
+  const plugin = {
+    available: async () => ({ available: true }),
+    getSupportedLanguages: async () => ({ languages: ['en-US', 'fr-FR'] }),
+    requestPermissions: async () => ({ speechRecognition: 'granted' }),
+    start: async (options: any) => { startOptions = options; return {}; },
+    stop: async () => {},
+    addListener: async (event: string, callback: (data: any) => void) => { listeners.set(event, callback); return { remove: async () => {} }; },
+  };
+  const recognizer = createNativeRecognizer(plugin, 'en-KE');
+  assert.equal(await recognizer.available(), true);
+  await recognizer.start({ onText: () => {}, onEnd: () => {} });
+  assert.equal(startOptions.language, 'en-US');
+  assert.equal('addPunctuation' in startOptions, false);
+  await recognizer.stop();
+});
+
+test('native speech recognition chooses exact or same-language locale only', () => {
+  assert.equal(matchRecognitionLocale('en-KE', ['en-US', 'fr-FR']), 'en-US');
+  assert.equal(matchRecognitionLocale('sw_KE', ['fr-FR', 'sw-TZ']), 'sw-TZ');
+  assert.equal(matchRecognitionLocale('en-US', ['fr-FR', 'sw-KE']), null);
 });

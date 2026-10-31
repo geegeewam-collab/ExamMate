@@ -1,22 +1,9 @@
 import { apiBase } from '../lib/config';
-import { AskFailure, type AskContext, type AskResult, type ServerTiming } from '../lib/voice/assistant';
+import { AskFailure, type AskContext, type AskResult } from '../lib/voice/assistant';
 import { GeminiKey } from './gemini-key';
 import { LicenseService } from './license-service';
 
 const ACTIONS = ['none', 'repeat', 'next', 'back', 'pause', 'resume', 'stop', 'slower', 'faster'];
-
-const num = (v: unknown) => (typeof v === 'number' && isFinite(v) ? v : 0);
-
-/** The server's own stopwatch, read defensively (an older server simply has none). */
-function readServerTiming(t: any): ServerTiming | undefined {
-  if (!t || typeof t !== 'object') return undefined;
-  return {
-    verifyMs: num(t.verifyMs), limitMs: num(t.limitMs), aiMs: num(t.aiMs), totalMs: num(t.totalMs),
-    tries: Array.isArray(t.tries)
-      ? t.tries.slice(0, 6).map((x: any) => ({ model: String(x?.model ?? ''), status: num(x?.status), ms: num(x?.ms), ...(x?.note ? { note: String(x.note) } : {}) }))
-      : [],
-  };
-}
 
 /** Sends what the student said (as text) to the server. The AI replies with an instruction for the reader or a spoken answer. */
 export async function askQuestion(question: string, ctx: AskContext, signal?: AbortSignal): Promise<AskResult> {
@@ -40,7 +27,8 @@ export async function askQuestion(question: string, ctx: AskContext, signal?: Ab
   const data = await res.json().catch(() => ({}));
   const roundTripMs = Date.now() - tSend;
   if (!res.ok) {
-    const extra = { timing: { prepMs, roundTripMs, server: readServerTiming(data.timing) }, detail: typeof data.detail === 'string' ? data.detail : undefined };
+    // Keep user-facing failures concise; provider diagnostics stay in server logs, not on a student's screen.
+    const extra = { timing: { prepMs, roundTripMs } };
     if (data.code === 'license') throw new AskFailure(data.error || 'License not valid.', 'license', extra);
     if (data.code === 'need_key' || data.code === 'student_key') throw new AskFailure(data.error || 'Check your Gemini key.', 'key', extra);
     throw new AskFailure(data.error || "Sorry, I couldn't get an answer.", 'other', extra);
@@ -48,7 +36,7 @@ export async function askQuestion(question: string, ctx: AskContext, signal?: Ab
   const action = ACTIONS.includes(data.action) ? data.action : 'none';
   const answer = String(data.answer || '').trim();
   if (action === 'none' && !answer) throw new AskFailure("Sorry, I couldn't get an answer.");
-  return { action, answer, ms: typeof data.ms === 'number' ? data.ms : undefined, timing: { prepMs, roundTripMs, server: readServerTiming(data.timing) } };
+  return { action, answer, timing: { prepMs, roundTripMs } };
 }
 
 /** Wakes the server up (cold start, database connection) while the student is still speaking. Never throws. */

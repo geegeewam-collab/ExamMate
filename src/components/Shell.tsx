@@ -8,7 +8,7 @@ import { kv } from '../lib/storage';
 import { windowAround, wordCount } from '../lib/text';
 import { readTextFile } from '../lib/files';
 import {
-  bindMediaSession, deviceLang, primeSpeech, setMediaInfo, speechSupported, startKeepAlive, stopKeepAlive, unwake, wake,
+  bindMediaSession, deviceLang, getAudioRoutes, isAndroidNative, isNative, openNativeSpeechInstall, primeSpeech, setMediaInfo, speechSupported, startKeepAlive, stopKeepAlive, unwake, wake,
   watchVoices, type VoiceOption,
 } from '../lib/platform';
 import {
@@ -48,6 +48,9 @@ export default function Shell({
   const [geminiKey, setGeminiKey] = useState<string | null>(null); // null until loaded
   const [setup, setSetup] = useState<{ message?: string } | null>(null);
   const [assistMsg, setAssistMsg] = useState('');
+  const [audioDevices, setAudioDevices] = useState<{ inputs: string[]; outputs: string[] } | null>(null);
+  const [audioDevicesChecked, setAudioDevicesChecked] = useState(false);
+  const [audioDevicesLoading, setAudioDevicesLoading] = useState(false);
 
   const camRef = useRef<HTMLInputElement | null>(null);
   const galRef = useRef<HTMLInputElement | null>(null);
@@ -79,6 +82,19 @@ export default function Shell({
   const assistantRef = useRef(assistant);
   useEffect(() => { assistantRef.current = assistant; }, [assistant]);
 
+  const checkAudioDevices = useCallback(async () => {
+    setAudioDevicesLoading(true);
+    try {
+      setAudioDevices(await getAudioRoutes());
+      setAudioDevicesChecked(true);
+    } finally {
+      setAudioDevicesLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (tab === 'settings' && isNative()) void checkAudioDevices();
+  }, [tab, checkAudioDevices]);
+
   /* who is this device? students need their own Gemini key; the owner uses the server's */
   useEffect(() => {
     void (async () => {
@@ -102,7 +118,7 @@ export default function Shell({
   const startReading = useCallback(
     (from = 0, body?: string) => {
       const t = (body ?? live.current.text).trim();
-      if (!speechSupported()) return setMsg('This browser cannot read aloud. Open Exam Mate in Chrome, or use the Android app.');
+      if (!speechSupported()) return setMsg('Speech output is unavailable here. Use a supported browser or install the Exam Mate app on Android or iPhone.');
       if (!engine.start(t, from)) return setMsg('Add some text first, or take a photo of the questions.');
       assistantRef.current.resetConversation();
       lastText.current = t;
@@ -146,23 +162,24 @@ export default function Shell({
         hasText: () => !!live.current.text.trim(),
         startFromText: () => startRef.current(),
         toggle: () => engine.toggle(),
+        play: () => { if (engine.getSnapshot().state === 'paused') engine.resume(); else if (engine.getSnapshot().state === 'idle') startRef.current(); },
+        pause: () => engine.pause(),
         next: () => engine.next(),
         back: () => engine.back(),
         repeat: () => engine.repeat(),
-        ask: () => {
-          const st = live.current.settings;
-          if (!st.assist || !st.earbudAsk) return false;
-          void assistantRef.current.trigger('earbud');
-          return true;
-        },
+        askOnPlayPause: () => live.current.settings.earbudAsk && live.current.settings.assist,
+        isPlaying: () => { const state = engine.getSnapshot().state; return state === 'playing' || state === 'counting'; },
+        ask: () => { void assistantRef.current.trigger('hold'); },
       }),
     [engine],
   );
   useEffect(() => {
-    if (snap.active) {
+    if (snap.active && !snap.finished) {
       setMediaInfo(snap.phrases[snap.idx] || 'Exam Mate', `${snap.idx + 1} of ${snap.phrases.length}`, snap.state === 'playing' || snap.state === 'counting');
+    } else {
+      setMediaInfo('Exam Mate', '', null);
     }
-  }, [snap.active, snap.idx, snap.state, snap.phrases]);
+  }, [snap.active, snap.finished, snap.idx, snap.state, snap.phrases]);
 
   /* photo to answers */
   const handlePhotos = useCallback(
@@ -238,8 +255,14 @@ export default function Shell({
     const r = await createRecognizer(deviceLang());
     const native = typeof window !== 'undefined' && !!(window as any).Capacitor?.isNativePlatform?.();
     const fail = (m: string) => { setAssistMsg(m); return m; };
-    if (!r) return fail(native ? 'Voice is not available on this phone.' : 'This browser cannot do voice. Use Chrome, or the Android app.');
-    if (!(await r.requestPermission())) return fail('Microphone permission was denied. Allow it in your phone or browser settings, then try again.');
+    if (!r) return fail(
+      isAndroidNative()
+        ? 'No speech-recognition service is available. Install or enable Google Speech Services (or your phone maker’s speech service), download the language you use, then reopen Exam Mate.'
+        : native
+          ? 'Speech recognition is unavailable on this iPhone. Check that Speech Recognition is available for your language and try again.'
+          : 'This browser does not support speech recognition. Install the native Exam Mate app on iPhone or use a supported browser.'
+    );
+    if (!(await r.requestPermission())) return fail('Microphone or speech-recognition permission was denied. Allow both in your phone settings, then try again.');
     update({ assist: true });
     return '';
   }
@@ -305,7 +328,12 @@ export default function Shell({
             onKey={() => setSetup({})}
             onRemoveKey={async () => { await GeminiKey.clear(); setGeminiKey(''); }}
             adminUrl={`${apiBase() ?? ''}/admin`}
-            onAssist={toggleAssist} assistMsg={assistMsg}
+            onAssist={toggleAssist} assistMsg={assistMsg} showAndroidTtsInstall={isAndroidNative()} onOpenTtsInstall={() => {
+              void openNativeSpeechInstall().then((opened) => {
+                if (!opened) setAssistMsg('Open Android Settings > Text-to-speech output and install a voice for your language.');
+              }).catch(() => setAssistMsg('Could not open Android speech voice settings. Open Settings > Text-to-speech output manually.'));
+            }}
+            showNativeAudioRoutes={isNative()} audioDevices={audioDevices} audioDevicesChecked={audioDevicesChecked} audioDevicesLoading={audioDevicesLoading} onCheckAudioDevices={() => void checkAudioDevices()}
           />
         )}
       </div>
@@ -321,8 +349,12 @@ export default function Shell({
 
       {snap.active && (
         <Player
-          engine={engine} snap={snap}
-          voice={settings.assist ? { assistant, state: voiceState, holdMs: settings.holdMs, wakeLabel: settings.wake === 'custom' ? settings.wakeCustom || WAKE_PRESETS.exam.label : WAKE_PRESETS[settings.wake].label, showTiming: owner === true } : null}
+          engine={engine} snap={snap} onOpenTtsInstall={isAndroidNative() ? () => {
+            void openNativeSpeechInstall().then((opened) => {
+              if (!opened) setMsg('Open Android Settings > Text-to-speech output and install a voice for your language.');
+            }).catch(() => setMsg('Could not open Android speech voice settings. Open Settings > Text-to-speech output manually.'));
+          } : undefined}
+          voice={settings.assist ? { assistant, state: voiceState, holdMs: settings.holdMs, wakeLabel: settings.wake === 'custom' ? settings.wakeCustom || WAKE_PRESETS.exam.label : WAKE_PRESETS[settings.wake].label } : null}
         />
       )}
       {setup && (

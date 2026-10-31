@@ -82,20 +82,20 @@ export function dropWakeWords(transcript: string, heard: string, used: number): 
 export type Command = 'repeat' | 'next' | 'back' | 'pause' | 'resume' | 'stop' | 'slower' | 'faster';
 
 const RULES: [Command, RegExp][] = [
-  ['repeat', /^(please )?(repeat( that| it| the last one)?|say (that|it) again|again|one more time|come again|read (that|it) again)( please)?$/],
-  ['next', /^(please )?(next( one| phrase| part)?|skip( that| this| it)?|move on|go to the next( one)?)( please)?$/],
-  ['back', /^(please )?(back|go back( one)?|previous( one| phrase)?|go to the previous( one)?|before that)( please)?$/],
-  ['pause', /^(please )?(pause|wait|hold on|hang on|hold)( please| a (second|sec|moment))?$/],
-  ['resume', /^(please )?(continue|resume|carry on|keep going|go on|go ahead|play)( please)?$/],
-  ['stop', /^(please )?(stop( reading| it)?|thats enough|enough|quit|end|cancel)( please)?$/],
-  ['slower', /^(please )?(slower|slow down|read slower|speak slower|too fast)( please)?$/],
-  ['faster', /^(please )?(faster|speed up|read faster|speak faster|too slow)( please)?$/],
+  ['repeat', /^(please )?(repeat( that| it| this| the (last|current|previous) (one|phrase|part|sentence|bit))?|say (that|it|this|the last (part|bit|phrase)) (again|one more time)|read (that|it|this|the last (part|bit|phrase)) again|again|one more time|come again|i missed that|i didnt catch (that|it|the last part)|what did you say)( please)?$/],
+  ['next', /^(please )?(next( one| phrase| part| section)?|skip( that| this| it| this part| this phrase)?|move on|move to the next (one|phrase|part|section)|go to the next( one| phrase| part| section)?|carry on to the next( part| phrase| section)?|forward|next section|next question)( please)?$/],
+  ['back', /^(please )?(back|back one|go back( one| a bit| a little| in the text| to the (previous|last) (one|phrase|part|section|sentence))?|take me back|take me to the previous (one|phrase|part|section|sentence)|previous( one| phrase| part| section| sentence)?|go to the previous( one| phrase| part| section| sentence)?|the one before( that)?|one (phrase|part|step) back|before that|we passed it)( please)?$/],
+  ['pause', /^(please )?(pause|wait|wait a (second|sec|moment|minute)|hold on|hang on|hold|give me a (second|sec|moment)|stop for a (second|moment))( please)?$/],
+  ['resume', /^(please )?(continue|resume|resume reading|carry on|keep going|go on|go ahead|play|start reading|im ready|im ready now)( please)?$/],
+  ['stop', /^(please )?(stop( reading| it| now)?|thats enough|enough|quit|end|end reading|cancel|finish reading|stop the reading)( please)?$/],
+  ['slower', /^(please )?(slower|slow down|read slower|speak slower|too fast|a little slower|a bit slower|take it slower)( please)?$/],
+  ['faster', /^(please )?(faster|speed up|speed it up|read faster|speak faster|too slow|a little faster|a bit faster|a little quicker|a bit quicker)( please)?$/],
 ];
 
 /** Whole-utterance commands only, so a real question that merely contains "next" is never mistaken for one. */
 export function parseCommand(text: string): Command | null {
   const n = normalize(text);
-  if (!n || n.split(' ').length > 5) return null;
+  if (!n || n.split(' ').length > 7) return null;
   for (const [cmd, re] of RULES) if (re.test(n)) return cmd;
   return null;
 }

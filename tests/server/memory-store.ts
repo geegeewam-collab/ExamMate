@@ -10,6 +10,20 @@ export function memoryStore(): Store & { counters: Map<string, number>; licenses
     async put(l) { licenses.set(l.key, structuredClone(l)); },
     async del(k) { licenses.delete(k); },
     async list() { return [...licenses.values()].map((l) => structuredClone(l)); },
+    async claimDevice(k, deviceId) {
+      const lic = licenses.get(k);
+      if (!lic) return { status: 'missing' as const };
+      if (lic.status !== 'active') return { status: 'revoked' as const };
+      if (!lic.devices.includes(deviceId)) {
+        if (lic.devices.length >= lic.maxDevices) return { status: 'limit' as const };
+        const updated = structuredClone(lic);
+        updated.devices.push(deviceId);
+        updated.activatedAt ??= new Date().toISOString();
+        licenses.set(k, updated);
+        return { status: 'ok' as const, license: structuredClone(updated) };
+      }
+      return { status: 'ok' as const, license: structuredClone(lic) };
+    },
     async hit(k, _ttl, delta = 1) {
       const n = (counters.get(k) ?? 0) + delta;
       if (delta !== 0) counters.set(k, Math.max(0, n));

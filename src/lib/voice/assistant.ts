@@ -87,7 +87,7 @@ export const DEFAULT_OPTIONS: AssistantOptions = {
 
 /** off: switched off. idle: ready (hold button works) but not listening for the wake phrase. waiting: listening for it. */
 export type AssistantStatus = 'off' | 'idle' | 'waiting' | 'listening' | 'thinking' | 'speaking';
-export type TriggerSource = 'wake' | 'hold' | 'earbud';
+export type TriggerSource = 'wake' | 'hold';
 
 /** Why we decided the person had finished talking. */
 export type CaptureEnd = 'silence' | 'final' | 'engine' | 'max' | 'no-speech' | 'cancelled';
@@ -221,7 +221,7 @@ export class VoiceAssistant {
     this.deps.clock.clearTimeout(t);
   }
 
-  /** Switch on. `wake` = also listen for the wake phrase (otherwise only the hold button / earbud trigger work). */
+  /** Switch on. `wake` = also listen for the wake phrase; otherwise only the on-screen push-to-talk button works. */
   async enable(o: { wake: boolean }) {
     if (!this.deps.recognizer) {
       this.set({ message: 'Voice is not supported on this device.' });

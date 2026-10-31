@@ -1,7 +1,28 @@
 import { Redis } from '@upstash/redis';
-import type { License, Store } from './license';
+import type { DeviceClaim, License, Store } from './license';
 
 let r: Redis | null = null;
+
+// One Redis-side atomic operation prevents concurrent first activations from exceeding maxDevices.
+const CLAIM_DEVICE_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return cjson.encode({ status = 'missing' }) end
+local lic = cjson.decode(raw)
+if lic.status ~= 'active' then return cjson.encode({ status = 'revoked' }) end
+local devices = lic.devices or {}
+for i = 1, #devices do
+  if devices[i] == ARGV[1] then
+    return cjson.encode({ status = 'ok', license = lic })
+  end
+end
+local maximum = tonumber(lic.maxDevices) or 1
+if #devices >= maximum then return cjson.encode({ status = 'limit' }) end
+table.insert(devices, ARGV[1])
+lic.devices = devices
+if not lic.activatedAt or lic.activatedAt == cjson.null then lic.activatedAt = ARGV[2] end
+redis.call('SET', KEYS[1], cjson.encode(lic))
+return cjson.encode({ status = 'ok', license = lic })
+`;
 const db = () =>
   (r ??= new Redis({
     url: process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || '',
@@ -25,6 +46,11 @@ export const store: Store = {
     if (!keys.length) return [];
     const rows = await db().mget<(License | null)[]>(...keys.map((k) => 'lic:' + k));
     return rows.filter((x): x is License => !!x);
+  },
+  async claimDevice(key, deviceId): Promise<DeviceClaim> {
+    const raw = await db().eval<string>(CLAIM_DEVICE_SCRIPT, ['lic:' + key], [deviceId, new Date().toISOString()]);
+    const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return result as DeviceClaim;
   },
   async hit(key, ttlSec, delta = 1) {
     const k = 'hit:' + key;

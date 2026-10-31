@@ -11,7 +11,7 @@ const CORS = {
 };
 
 export const json = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', ...CORS } });
+  new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store, max-age=0', ...CORS } });
 export const preflight = () => new Response(null, { status: 204, headers: CORS });
 
 export const secret = () => process.env.TOKEN_SECRET || '';

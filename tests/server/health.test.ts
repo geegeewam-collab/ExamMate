@@ -8,14 +8,14 @@ import { memoryStore, post } from './memory-store';
 import type { Store } from '../../server/license';
 
 const goodEnv = {
-  ADMIN_PASSWORD: 'super secret admin pw', TOKEN_SECRET: 'tok-secret-123', GEMINI_API_KEY: 'AIzaServerKey123',
+  ADMIN_PASSWORD: 'super secret admin password', TOKEN_SECRET: 'a'.repeat(64), GEMINI_API_KEY: 'AIzaServerKey123',
   UPSTASH_REDIS_REST_URL: 'https://eager-owl-1234.upstash.io', UPSTASH_REDIS_REST_TOKEN: 'AXabcDEF-token', VERCEL_ENV: 'production',
 };
 const brokenStore = (): Store => {
   const boom = async () => { throw new Error('fetch failed'); };
   return { get: boom, put: boom, del: boom, list: boom, hit: boom } as unknown as Store;
 };
-const adminReq = () => new Request('http://x/api/admin/licenses', { headers: { authorization: 'Bearer super secret admin pw', 'x-forwarded-for': '1.1.1.1' } });
+const adminReq = () => new Request('http://x/api/admin/licenses', { headers: { authorization: 'Bearer super secret admin password', 'x-forwarded-for': '1.1.1.1' } });
 
 test('health: all good', async () => {
   const h = await health(memoryStore(), goodEnv);
@@ -35,6 +35,12 @@ test('health: nothing configured gives plain-language hints', async () => {
   assert.equal(h.database, 'not configured');
   const text = h.hints.join(' ');
   for (const k of ['ADMIN_PASSWORD', 'TOKEN_SECRET', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN']) assert.match(text, new RegExp(k));
+});
+
+test('health: warns when token secret is too short', async () => {
+  const h = await health(memoryStore(), { ...goodEnv, TOKEN_SECRET: 'too-short' });
+  assert.equal(h.ok, false);
+  assert.match(h.hints.join(' '), /TOKEN_SECRET is too short.*at least 32 random characters/i);
 });
 
 test('health: catches the redis:// connection string mistake', async () => {

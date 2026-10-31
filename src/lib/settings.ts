@@ -21,6 +21,7 @@ export interface Settings {
   wakeCustom: string;
   /** How long to hold the on-screen button before it listens. 0 = a simple tap. */
   holdMs: 0 | 1000 | 3000;
+  /** Route a headset play/pause media press to voice Ask while reading. Kept under the legacy storage key for migration compatibility. */
   earbudAsk: boolean;
 }
 

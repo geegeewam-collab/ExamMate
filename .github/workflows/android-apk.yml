@@ -1,6 +1,6 @@
 # Builds the signed Android APK and attaches it to a GitHub Release.
 #
-# To publish a new version:   git tag v1.0.0   then   git push --tags
+# To publish a new version:   git tag v2.1.4   then   git push --tags
 # The APK appears under Releases as ExamMate.apk.
 # (Actions > "Build Android APK" > Run workflow builds an APK you can download from the run page, without a release.)
 name: Build Android APK

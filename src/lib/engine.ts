@@ -61,7 +61,7 @@ export interface Snapshot {
   hint: string;
 }
 
-export const NO_VOICE = 'No speech voice found on this device. In your phone settings, open Text-to-speech and choose or install an engine, then press Resume.';
+export const NO_VOICE = 'No compatible speech voice is available. On Android, open Settings > Text-to-speech output and install a voice for your language. On iPhone, check Settings > Accessibility > Spoken Content and download a voice. Return to Exam Mate and press Resume.';
 
 const EMPTY: Snapshot = {
   active: false,

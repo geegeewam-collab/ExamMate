@@ -10,11 +10,17 @@ export interface License {
   activatedAt?: string;
 }
 
+export type DeviceClaim =
+  | { status: 'ok'; license: License }
+  | { status: 'missing' | 'revoked' | 'limit' };
+
 export interface Store {
   get(key: string): Promise<License | null>;
   put(lic: License): Promise<void>;
   del(key: string): Promise<void>;
   list(): Promise<License[]>;
+  /** Atomically bind a device without allowing concurrent activations to exceed maxDevices. */
+  claimDevice?(key: string, deviceId: string): Promise<DeviceClaim>;
   /** Adds `delta` to a counter that expires after `ttlSec`; returns the new value. delta 0 just reads. */
   hit(key: string, ttlSec: number, delta?: number): Promise<number>;
 }
@@ -63,16 +69,24 @@ export async function activate(
 ): Promise<{ ok: true; token: string } | Fail> {
   const key = normKey(keyRaw);
   if (!key || !validDevice(deviceId)) return { ok: false, status: 400, error: 'Missing license key or device.' };
-  const lic = await store.get(key);
-  if (!lic) return { ok: false, status: 404, error: 'Invalid license key.' };
-  if (lic.status !== 'active') return { ok: false, status: 403, error: 'This license has been revoked.' };
-  if (!lic.devices.includes(deviceId)) {
-    if (lic.devices.length >= lic.maxDevices) {
-      return { ok: false, status: 403, error: 'This license is already used on another device.' };
+  if (store.claimDevice) {
+    const claim = await store.claimDevice(key, deviceId);
+    if (claim.status === 'missing') return { ok: false, status: 404, error: 'Invalid license key.' };
+    if (claim.status === 'revoked') return { ok: false, status: 403, error: 'This license has been revoked.' };
+    if (claim.status === 'limit') return { ok: false, status: 403, error: 'This license is already used on another device.' };
+  } else {
+    // Compatibility path for test/custom stores. Production Upstash store implements atomic claimDevice.
+    const lic = await store.get(key);
+    if (!lic) return { ok: false, status: 404, error: 'Invalid license key.' };
+    if (lic.status !== 'active') return { ok: false, status: 403, error: 'This license has been revoked.' };
+    if (!lic.devices.includes(deviceId)) {
+      if (lic.devices.length >= lic.maxDevices) {
+        return { ok: false, status: 403, error: 'This license is already used on another device.' };
+      }
+      lic.devices.push(deviceId);
+      lic.activatedAt ??= new Date().toISOString();
+      await store.put(lic);
     }
-    lic.devices.push(deviceId);
-    lic.activatedAt ??= new Date().toISOString();
-    await store.put(lic);
   }
   return { ok: true, token: signToken(key, deviceId, secret) };
 }

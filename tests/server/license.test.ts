@@ -21,6 +21,18 @@ test('one license, one device: sharing the key with a friend fails', async () =>
   assert.ok(!b.ok && b.status === 403 && /another device/.test(b.error));
 });
 
+test('concurrent first activations cannot exceed the device limit', async () => {
+  const st = memoryStore();
+  const [lic] = await createLicenses(st, 'Single device', 1, 1);
+  const results = await Promise.all([
+    activate(st, S, lic.key, 'device-phone-1'),
+    activate(st, S, lic.key, 'device-phone-2'),
+  ]);
+  assert.equal(results.filter((r) => r.ok).length, 1);
+  assert.equal(results.filter((r) => !r.ok && r.status === 403).length, 1);
+  assert.equal((await st.get(lic.key))!.devices.length, 1);
+});
+
 test('bad input is rejected with clear errors', async () => {
   const st = memoryStore();
   const [lic] = await createLicenses(st, '', 1, 1);

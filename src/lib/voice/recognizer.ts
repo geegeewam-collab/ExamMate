@@ -1,4 +1,4 @@
-/** Speech recognition behind one small interface: the browser's Web Speech API, or a native plugin inside the Android app. */
+/** Speech recognition behind one small interface: the browser Web Speech API, or the native Speech framework / Android SpeechRecognizer through Capacitor. */
 
 export type EndReason = 'ended' | 'no-speech' | 'denied' | 'unavailable' | 'error';
 
@@ -83,17 +83,38 @@ export function createWebRecognizer(w: any, lang: string): Recognizer | null {
   };
 }
 
-/* ---------------- Android app (Capacitor speech-recognition plugin) ---------------- */
+/* ---------------- iOS + Android app (Capacitor native speech-recognition plugin) ---------------- */
 export interface NativePlugin {
   available(): Promise<{ available: boolean }>;
   requestPermissions(): Promise<any>;
   start(o: any): Promise<any>;
   stop(): Promise<void>;
+  forceStop?(options?: { timeout?: number }): Promise<void>;
   addListener(ev: string, cb: (d: any) => void): Promise<{ remove(): Promise<void> }>;
+  checkPermissions?(): Promise<any>;
+  getSupportedLanguages?(): Promise<{ languages: string[] }>;
+}
+
+/** Prefer an exact device locale, then a regional variant of the same base language. Never silently switch to a different language. */
+export function matchRecognitionLocale(requested: string, supported: string[]): string | null {
+  const canonical = (value: string) => String(value || '').replace(/_/g, '-').toLowerCase();
+  const target = canonical(requested);
+  const exact = supported.find((value) => canonical(value) === target);
+  if (exact) return exact;
+  const base = target.split('-')[0];
+  return supported.find((value) => canonical(value).split('-')[0] === base) ?? null;
 }
 
 export function createNativeRecognizer(SR: NativePlugin, lang: string): Recognizer {
   let handles: { remove(): Promise<void> }[] = [];
+  let resolvedLanguage: Promise<string | null> | null = null;
+  const recognitionLanguage = () => (resolvedLanguage ??= (async () => {
+    try {
+      const supported = await SR.getSupportedLanguages?.();
+      if (supported?.languages?.length) return matchRecognitionLocale(lang, supported.languages);
+    } catch { /* older plugin builds may not expose locale enumeration */ }
+    return lang;
+  })());
   const clean = async () => {
     for (const h of handles) { try { await h.remove(); } catch { /* ignore */ } }
     handles = [];
@@ -101,18 +122,23 @@ export function createNativeRecognizer(SR: NativePlugin, lang: string): Recogniz
   return {
     kind: 'native',
     async available() {
-      try { return !!(await SR.available()).available; } catch { return false; }
+      try {
+        const language = await recognitionLanguage();
+        return !!language && !!(await SR.available()).available;
+      } catch { return false; }
     },
     async requestPermission() {
       try {
         const r = await SR.requestPermissions();
-        const v = r?.speechRecognition;
-        return v === undefined ? true : v === 'granted';
+        const v = String(r?.speechRecognition ?? '').toLowerCase();
+        return v === 'granted';
       } catch { return false; }
     },
     async start(h) {
       await clean();
       let ended = false;
+      const language = await recognitionLanguage();
+      if (!language) { h.onEnd('unavailable', `Speech recognition does not support ${lang} on this device.`); return; }
       const end = (reason: EndReason, detail?: string) => {
         if (ended) return;
         ended = true;
@@ -120,29 +146,43 @@ export function createNativeRecognizer(SR: NativePlugin, lang: string): Recogniz
         h.onEnd(reason, detail);
       };
       handles.push(await SR.addListener('partialResults', (d) => {
-        const t = d?.matches?.[0];
-        if (t) h.onText(String(t), false, 0); // one native session = one utterance, and each partial holds everything said so far
+        if (ended) return;
+        const t = d?.accumulatedText || d?.accumulated || d?.matches?.[0];
+        if (t) h.onText(String(t), false, 0);
       }));
       handles.push(await SR.addListener('listeningState', (d) => {
-        if (d?.status === 'started') h.onReady?.();
-        if (d?.status === 'stopped') end('ended');
+        if (ended) return;
+        const state = String(d?.status ?? d?.state ?? '').toLowerCase();
+        const reason = String(d?.reason ?? '').toLowerCase();
+        if (state === 'started') h.onReady?.();
+        if (state === 'stopped' || state === 'ended') end(reason === 'silence' ? 'no-speech' : reason === 'error' ? 'error' : 'ended', reason || undefined);
+      }));
+      handles.push(await SR.addListener('error', (d) => {
+        const code = String(d?.errorCode ?? d?.code ?? d?.error ?? d?.message ?? d?.errorMessage ?? '');
+        const lower = code.toLowerCase();
+        end(/permission|denied|not authorized/.test(lower) ? 'denied' : /no[\s_-]?speech/.test(lower) ? 'no-speech' : /unavailable|not[\s_-]?available|not[\s_-]?supported|unsupported|language.*(missing|unsupported)/.test(lower) ? 'unavailable' : 'error', code);
       }));
       try {
-        const res = await SR.start({ language: lang, maxResults: 1, partialResults: true, popup: false });
-        const t = res?.matches?.[0];
-        if (t) h.onText(String(t), true, 0); // some versions return the final text here
+        const res = await SR.start({ language, maxResults: 1, partialResults: true, popup: false });
+        const t = res?.accumulatedText || res?.matches?.[0];
+        if (t && !ended) h.onText(String(t), false, 0);
       } catch (e) {
         const m = String((e as any)?.message || e);
-        end(/permission|denied/i.test(m) ? 'denied' : 'error', m);
+        end(/permission|denied|not authorized/i.test(m) ? 'denied' : /not[\s_-]?available|unavailable|not[\s_-]?supported|unsupported|language.*(missing|unsupported)/i.test(m) ? 'unavailable' : 'error', m);
       }
     },
     async stop() {
-      try { await SR.stop(); } catch { /* ignore */ }
+      try {
+        if (SR.forceStop) await SR.forceStop({ timeout: 1500 });
+        else await SR.stop();
+      } catch {
+        try { await SR.stop(); } catch { /* native session may already be closed */ }
+      }
     },
   };
 }
 
-/** Picks the right recognizer for where the app is running, or null if voice is not possible here. */
+/** Selects the native speech engine on Capacitor iOS/Android, otherwise the browser implementation. */
 export async function createRecognizer(lang = 'en-US'): Promise<Recognizer | null> {
   if (typeof window === 'undefined') return null;
   const native = !!(window as any).Capacitor?.isNativePlatform?.();

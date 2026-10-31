@@ -2,7 +2,7 @@ import { createLicenses, normKey, type Store } from './license';
 import { blocked, clientIp, isAdmin, recordFail } from './http';
 
 const reply = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+  new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store, max-age=0' } });
 
 /** Shared by GET/POST/PATCH/DELETE: password check with brute-force protection. */
 async function guard(req: Request, store: Store): Promise<Response | null> {

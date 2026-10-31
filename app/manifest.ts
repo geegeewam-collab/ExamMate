@@ -10,8 +10,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: 'Snap the questions. Exam Mate reads the answers slowly so you can write them down.',
     start_url: '/',
     display: 'standalone',
-    background_color: '#060b09',
-    theme_color: '#060b09',
+    background_color: '#090c0f',
+    theme_color: '#090c0f',
     icons: [
       { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
       { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },

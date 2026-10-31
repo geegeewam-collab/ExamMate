@@ -45,3 +45,32 @@
   .lic { padding: 14px; }
   .meta { gap: 4px 10px; }
 }
+
+/* V2.1.4 dashboard polish — align admin surfaces with the student app. */
+.stat {
+  border: 1px solid var(--surface-outline);
+  background: linear-gradient(145deg, var(--surface-raised), var(--surface));
+  box-shadow: var(--shadow);
+}
+.stat b { letter-spacing: -0.055em; }
+.lic {
+  border-radius: 20px;
+  background: linear-gradient(145deg, var(--surface-raised), var(--surface));
+  border-color: var(--surface-outline);
+}
+.fresh {
+  border-radius: 18px;
+  background: linear-gradient(145deg, var(--accent-soft-strong), var(--accent-soft));
+  border-color: var(--accent-line);
+}
+.badge { min-height: 27px; padding: 0 11px; }
+.meta { row-gap: 6px; }
+.keytxt { overflow-wrap: anywhere; }
+.toast { border-color: var(--surface-outline); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+@media (max-width: 420px) {
+  .wrap { padding-top: calc(env(safe-area-inset-top, 0px) + 18px); }
+  .stat { padding: 13px 14px; }
+  .stat b { font-size: 25px; }
+  .lic-top { align-items: flex-start; }
+  .acts .btn { flex: 1 1 auto; }
+}

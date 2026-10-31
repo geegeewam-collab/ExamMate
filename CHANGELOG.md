@@ -1,0 +1,37 @@
+# Changelog
+
+## [2.1.4] - 2026-10-31
+
+### Changed
+- Refined the existing graphite, teal and ivory visual system with clearer hierarchy, more deliberate card surfaces, calmer reader controls, improved settings grouping, and tighter small-screen spacing.
+- Improved admin dashboard surface consistency and key wrapping on narrow screens.
+- Preserved all V2.1.3 native Android/iOS speech integrations, headset media controls, and the optional play/pause-to-Ask shortcut.
+- Bumped the release metadata to 2.1.4 (Android default versionCode 6; iOS build 6).
+
+### Validation
+- Presentation-only CSS refinements; no component structure, API contracts, reader logic, or media-control behaviour changed.
+
+## [2.1.3] - 2026-10-31
+
+### Changed
+- Replaced the optional headset Ask shortcut from Previous track to the standard Play/Pause media event, so it no longer depends on a previous-track button or a two-earbud gesture.
+- While reading, Play, Pause or Play/Pause toggle opens Voice Ask when the option is enabled and Voice Ask is switched on. The assistant pauses reading, listens, answers, and resumes. When already paused, Play continues to resume normally.
+- Next track remains Next phrase; Previous track remains Back; rewind remains Repeat.
+- Retained the `earbudAsk` saved-settings key so users upgrading from V2.1.2 keep their opt-in preference, now applied to Play/Pause.
+- Android versionCode is 5 and versionName is 2.1.3. iOS build number is 5.
+
+### Compatibility note
+- The shortcut uses standard play/pause media events, which are commonly available through the main button on wired EarPods and single Bluetooth earbuds. A headset or OS that reserves that press for Siri/Google Assistant or does not forward a media event cannot be overridden by the app. The on-screen Ask button and wake phrase remain available fallbacks.
+
+## [2.1.2] - 2026-10-31
+
+### Added
+- Optional EarPods/headset Ask shortcut. Enable **Use headset previous-track button to Ask** in Settings; a supported Previous track media event starts voice capture instead of reader Back. On many wired EarPods this is triple-click.
+- The spoken command “go back” continues to navigate backwards when the hardware shortcut is assigned to Ask.
+
+### Changed
+- Previous-track behavior remains Back by default for existing users. The new shortcut is opt-in and is only available while voice Ask is enabled and the reading session is active.
+- Android default versionCode is 4 and versionName is 2.1.2.
+
+### Compatibility note
+- The shortcut listens for the standard previous-track media command. Many wired EarPods expose this via triple-click; Bluetooth headset gestures vary by model and OS configuration. Apps cannot override gestures reserved by Siri/Google Assistant or force a headset to emit a particular media command. Keep Exam Mate open while reading for the voice capture to start reliably.

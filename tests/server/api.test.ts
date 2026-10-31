@@ -304,11 +304,24 @@ test('ask: answers a spoken question using the student key, with the answers as 
   assert.equal(r.status, 200);
   const d = await r.json();
   assert.deepEqual([d.action, d.answer], ['none', 'Photosynthesis is how plants make food from light.']);
-  assert.ok(typeof d.ms === 'number' && d.model);
+  assert.equal('ms' in d, false, 'server timings are not part of the client response');
+  assert.equal('model' in d, false, 'provider model identifiers stay server-side');
   assert.ok(seen.length === 1 && seen[0].key === STUDENT_KEY);
   const sent = seen[0].body.contents[0].parts[0].text;
   assert.match(sent, /Mitosis is cell division/);
   assert.match(sent, /The student's latest words \(decide from this message, using all context above\): what does that mean/);
+});
+
+test('ask: rejects oversized request bodies before asking Gemini', async () => {
+  const { st, h } = await activated();
+  const seen = fakeAsk();
+  const req = new Request('http://x/api/ask', {
+    method: 'POST', headers: { ...withKey(h), 'content-type': 'application/json' },
+    body: JSON.stringify({ question: 'hello', context: 'x'.repeat(25_000) }),
+  });
+  const res = await handleAsk(req, st);
+  assert.equal(res.status, 413);
+  assert.equal(seen.length, 0);
 });
 
 test('ask: includes recent conversation for follow-up questions and sanitizes untrusted history', async () => {
@@ -497,24 +510,23 @@ test('generate: when every model hangs it gives up inside the total budget with 
   }
 });
 
-test('ask: reports where the server spent its time, including every call made to Google', async () => {
+test('ask: returns only the student-facing answer and never exposes provider diagnostics', async () => {
   const { st, h } = await activated();
   fakeAsk((_n, body) => (body.generationConfig.thinkingConfig ? google(400, 'Thinking is not supported for this model.') : intent('Works without it.')));
-  const d = await (await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st)).json();
-  for (const k of ['verifyMs', 'limitMs', 'aiMs', 'totalMs']) assert.ok(typeof d.timing[k] === 'number' && d.timing[k] >= 0, k);
-  assert.equal(d.ms, d.timing.totalMs);
-  assert.deepEqual(d.timing.tries.map((x: any) => x.status), [400, 400, 400, 200]);
-  assert.match(d.timing.tries[0].note, /thinkingLevel minimal: Thinking is not supported/, 'what we asked for, and Google\'s own words when it said no');
-  assert.equal(d.timing.tries[3].note, 'no thinking setting', 'running without a thinking setting is visible, because it makes the answer slow');
+  const res = await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st);
+  const d = await res.json();
+  assert.equal(d.action, 'none');
+  assert.equal(d.answer, 'Works without it.');
+  for (const key of ['timing', 'ms', 'model', 'detail', 'trace', 'tries']) assert.equal(key in d, false, `${key} must not be exposed to the client`);
 });
 
-test('ask: when Google fails, the failure still says how long each call took, so a slow or stuck AI can be told apart from a bad question', async () => {
+test('ask: provider failures return a short message without upstream diagnostics', async () => {
   const { st, h } = await activated();
-  fakeAsk(() => google(500, 'backend error'));
+  fakeAsk(() => google(500, 'backend error with provider details'));
   const res = await handleAsk(ask(withKey(h), { question: 'what does that mean' }), st);
   assert.ok(res.status >= 400);
   const d = await res.json();
-  assert.ok(Array.isArray(d.timing?.tries) && d.timing.tries.length >= 1);
-  assert.ok(d.timing.tries.every((x: any) => x.status === 500 && typeof x.ms === 'number' && x.model));
-  assert.equal(typeof d.timing.totalMs, 'number');
+  assert.equal(typeof d.error, 'string');
+  for (const key of ['timing', 'ms', 'model', 'detail', 'trace', 'tries']) assert.equal(key in d, false, `${key} must not be exposed to the client`);
+  assert.equal(JSON.stringify(d).includes('backend error'), false);
 });

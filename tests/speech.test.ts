@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createNativeSpeech, type NativeTTS } from '../src/lib/platform';
+import { createNativeSpeech, openNativeSpeechInstall, type NativeTTS } from '../src/lib/platform';
 import { ReaderEngine, NO_VOICE } from '../src/lib/engine';
 import { FakeClock, FakeSpeech, OPTS } from './helpers';
 
@@ -33,6 +33,7 @@ test('native speech: speaks with the phone engine, flush strategy, and reports s
   assert.equal(f.spoken[0].text, 'Hello there.');
   assert.equal(f.spoken[0].rate, 0.5);
   assert.equal(f.spoken[0].queueStrategy, 0);
+  assert.equal(f.spoken[0].category, 'playback', 'native iOS speech should use the playback audio session for headset/background routing');
   assert.equal(f.spoken[0].lang, 'en', 'first supported language from the phone settings');
   f.done(); await settle();
   assert.deepEqual(ev, ['start', 'end']);
@@ -45,6 +46,23 @@ test('native speech: falls back to en-US when the phone language has no voice, a
   assert.equal(f.spoken[0].lang, 'en-US');
   sp.speak('Again', { rate: 1, voiceURI: '' }, h); await settle();
   assert.equal(f.calls.filter((c) => c.startsWith('lang:')).length, 3, 'languages are only probed once');
+});
+
+test('native speech: a failed language lookup is retried instead of cached forever', async () => {
+  let installed = false;
+  const plugin = fakePlugin({
+    getSupportedLanguages: async () => ({ languages: installed ? ['en-US'] : [] }),
+    isLanguageSupported: async ({ lang }) => ({ supported: installed && lang === 'en-US' }),
+  });
+  const events: string[] = [];
+  const sp = createNativeSpeech(async () => plugin.plugin, ['sw-KE', 'en-US']);
+  const h = { onstart: () => events.push('start'), onend: () => events.push('end'), onerror: (e: string) => events.push(`error:${e}`) };
+  sp.speak('First attempt', { rate: 1, voiceURI: '' }, h); await settle();
+  assert.deepEqual(events, ['error:unsupported']);
+  installed = true;
+  sp.speak('After installing voice', { rate: 1, voiceURI: '' }, h); await settle();
+  assert.equal(plugin.spoken[0].lang, 'en-US');
+  assert.ok(events.includes('start'));
 });
 
 test('native speech: rate is kept in a safe range', async () => {
@@ -101,4 +119,31 @@ test('deviceLang: cleans odd system locale values', () => {
   assert.equal(deviceLang('sw_KE.UTF-8'), 'sw-KE');
   assert.equal(deviceLang(''), 'en-US');
   assert.equal(deviceLang('???'), 'en-US');
+});
+
+test('Android TTS installer helper is safe in the web build', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: undefined });
+  try {
+    assert.equal(await openNativeSpeechInstall(), false);
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'window', original);
+    else delete (globalThis as any).window;
+  }
+});
+
+
+test('native speech: does not silently read with an unrelated installed language', async () => {
+  const plugin = fakePlugin({
+    getSupportedLanguages: async () => ({ languages: ['fr-FR'] }),
+    isLanguageSupported: async () => ({ supported: false }),
+  });
+  const events: string[] = [];
+  const sp = createNativeSpeech(async () => plugin.plugin, ['sw-KE', 'sw', 'en-US']);
+  sp.speak('Habari', { rate: 1, voiceURI: '' }, {
+    onstart: () => events.push('start'), onend: () => events.push('end'), onerror: (e) => events.push(`error:${e}`),
+  });
+  await settle();
+  assert.deepEqual(events, ['error:unsupported']);
+  assert.equal(plugin.spoken.length, 0, 'an unrelated French voice must never be used for Swahili/English text');
 });

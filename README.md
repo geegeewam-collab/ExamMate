@@ -1,15 +1,18 @@
 # Exam Mate
 
+**Current release: v2.1.4 (31 October 2026).** See [CHANGELOG.md](./CHANGELOG.md) for this release.
+
 Snap a photo of exam questions. Exam Mate answers them and reads the answers aloud slowly, with a pause after each phrase so the student can write.
 
-**One Vercel project does everything.** Your site `https://exam-mate-one.vercel.app` serves the student app at `/`, **your admin dashboard at `/admin`**, and the server (`/api/...`). The Android app talks to the same site.
+**One Vercel project does everything.** Your site `https://exam-mate-one.vercel.app` serves the student app at `/`, **your admin dashboard at `/admin`**, and the server (`/api/...`). The Android and iOS apps talk to the same site.
 
 ```
 app/        Pages (student app "/", dashboard "/admin") and the server routes (app/api)
 src/        Student app code
 server/     License, owner and photo-answer logic (no framework, fully tested)
-android/    Android project (icon and splash already set)
-scripts/    export.mjs builds the Android bundle, test.mjs runs the tests
+android/    Android project and native media-session bridge
+ios/templates/  iOS native media-session bridge (generated into Xcode project during sync)
+scripts/    export.mjs builds the platform bundle; add-ios.mjs and setup-ios.mjs configure iOS
 .github/    Workflow that builds the signed APK and posts it to GitHub Releases
 tests/      Unit tests (npm test)
 _unused/    Old code kept for reference
@@ -26,13 +29,13 @@ Students never see an owner option. After the first activation the app does not 
 
 ## Setup (one time)
 
-1. Run `npm install` once on your computer (it adds `@upstash/redis` and refreshes `package-lock.json`), then **push to GitHub**. Your existing Vercel project `exam-mate-one` redeploys automatically.
+1. Run `npm install` once on your computer, then commit the refreshed `package-lock.json` and **push to GitHub**. The supplied lockfile was missing entries for three newly declared native dependencies (`@capacitor/ios`, `@capacitor-community/text-to-speech` and `@capgo/capacitor-speech-recognition`), so do not use `npm ci` until this refresh has completed. Your existing Vercel project `exam-mate-one` redeploys automatically.
 2. In Vercel, open the project: **Settings > Build and Development**. If **Output Directory** shows an override such as `out`, clear it (leave the default). The website is now a normal Next.js build.
 3. **Database (free).** When you create it, pick the region **US East (N. Virginia)**: that is next to where Vercel runs your server, which keeps every request quick. Go to https://upstash.com, create a **Redis** database on the **Free** plan (no card needed; check their pricing page for the current limits) and copy its **REST URL** and **REST Token**. This app stores only license records and a few counters, so the free plan is plenty. If Vercel's Marketplace screen does not show a free option, ignore it and use upstash.com directly.
-4. **Settings > Environment Variables** (add all five, then redeploy):
+4. **Settings > Environment Variables** (add the required values, then redeploy):
    - `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`: the two values from step 3
    - `ADMIN_PASSWORD`: long and private. **This is your login. There is no sign-up.**
-   - `TOKEN_SECRET`: run `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and paste the result.
+   - `TOKEN_SECRET`: run `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` and paste the result. It must be at least 32 random characters; 64 hex characters is recommended. **Changing this value invalidates every previously issued activation token**, so existing users may need to activate their license again.
    - `GEMINI_ASK_MODEL` (optional): the model used for voice questions. Leave empty for the default fast one.
    - `GEMINI_API_KEY`: your own key from https://aistudio.google.com/apikey. Used only for your owner devices.
 5. **Check the setup:** open `https://exam-mate-one.vercel.app/api/health`. It should say `"ok": true` and `"database": "ok"`. If not, the `hints` list tells you in plain words what is missing. It never shows your secret values.
@@ -43,19 +46,51 @@ Open the app (website or APK). On the first screen **tap the app icon 5 times**.
 
 If you ever change `ADMIN_PASSWORD`, every owner device is signed out and signs in again with the new one.
 
-### Android app
-Create `.env.local` in the project root:
-```
+### Native Android and iPhone apps
+
+Set the API URL before making a native bundle. Add `.env.local` in the project root:
+
+```env
 NEXT_PUBLIC_API_URL=https://exam-mate-one.vercel.app
 NEXT_PUBLIC_SUPPORT_URL=https://wa.me/2547XXXXXXXX
 ```
-Then:
-```
+
+Install dependencies (use `npm install` at least once after updating the Capacitor, iOS and speech plugins so the lockfile is regenerated):
+
+```bash
 npm install
-npm run cap:sync     # builds the app bundle and copies it into android/
-npm run cap:open     # opens Android Studio, then Build > Build APK
 ```
-The website needs no `NEXT_PUBLIC_API_URL`. Only the Android build does.
+
+**Android** — on Windows, macOS or Linux with Android Studio/SDK installed:
+
+```bash
+npm run cap:sync
+npm run cap:open
+```
+
+Build and test the APK from Android Studio. The native ExamMateMedia plugin provides Android MediaSession controls for play/pause, next, previous and rewind.
+
+**iPhone** — on a Mac with a Capacitor 8-compatible Xcode toolchain installed:
+
+```bash
+npm run cap:sync:ios
+npm run cap:open:ios
+```
+
+In Xcode, select your Apple development team, set the bundle signing settings, connect an iPhone or choose a simulator, then build. The sync command generates `ios/App` and installs the native media-control bridge and speech privacy descriptions.
+
+The web/PWA build remains available at `https://exam-mate-one.vercel.app`; it uses browser speech and browser Media Session support where available. Native Bluetooth/wired audio routing is handled by iOS or Android. Exam Mate does not scan for, pair or force-connect headsets. Pair a Bluetooth headset in the phone's Settings first; USB-C, Lightning and compatible 3.5 mm adapters use the system audio route automatically. The OS chooses whether a headset microphone is available to its speech-recognition service.
+
+## Publishing a release
+
+This project is versioned as `2.1.4`. After committing the V2 source to the release branch, create and push the release tag:
+
+```bash
+git tag -a v2.1.4 -m "Exam Mate v2.1.4"
+git push origin v2.1.4
+```
+
+The Android GitHub Actions workflow builds the APK and attaches it to the GitHub Release. The iOS build workflow validates the generated iOS project on macOS; App Store/TestFlight signing and release remain an Xcode/App Store Connect step. See `NATIVE-AUDIO-SETUP.md` for headset behavior and device test requirements. The workflow uses the GitHub run number as Android `versionCode` and the tag (for example `2.1.4`) as `versionName`. Ensure the Android signing secrets described below are configured before pushing the tag.
 
 ## Getting the app to buyers
 
@@ -64,7 +99,7 @@ There are three ways. Use the first two together.
 ### 1. The web version (works today, nothing to build)
 Open `https://exam-mate-one.vercel.app` on the phone.
 - **Android (Chrome):** menu > **Install app** (or **Add to Home screen**).
-- **iPhone (Safari):** Share > **Add to Home Screen**.
+- **iPhone (Safari):** Share > **Add to Home Screen**. For native iPhone headset media controls and native speech permissions, build the iOS app as described above; PWA support depends on Safari's browser APIs. For native speech-recognition permission prompts and native headset media controls, build the iOS app as described above; the PWA has browser-dependent speech and media support.
 
 It gets the Exam Mate icon and opens full screen like an app. Activation works the same. Clearing the browser's site data counts as a new device, so you would use **Reset device**.
 
@@ -84,12 +119,7 @@ Turn it into text for GitHub:
 In your GitHub repo: **Settings > Secrets and variables > Actions > New repository secret**, add four secrets:
 `ANDROID_KEYSTORE_BASE64` (the text above), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` (`exammate`), `ANDROID_KEY_PASSWORD`.
 
-**Every release:**
-```
-git tag v1.0.0
-git push --tags
-```
-GitHub builds the app (about 10 minutes, watch it under the **Actions** tab) and posts **ExamMate.apk** under **Releases**. For the next version use `v1.0.1` and so on.
+**Every Android release:** push the same `v2.1.4` tag shown in Publishing a release. GitHub builds the app and posts **ExamMate.apk** under **Releases**. For the next version use `v2.1.5` and so on.
 
 **The link you send to buyers** (after the first release):
 - A friendly page: `https://exam-mate-one.vercel.app/download` (big Download button plus install steps)
@@ -123,18 +153,18 @@ Turn it on in **Settings > Voice assistant**. While a reading session is open yo
 - say the **wake phrase** (default "Hey Exam Mate", or "Hey Reader", "Hello Mate", or your own), then keep talking. A ding plays, the reader **pauses**, it listens, then it answers out loud and **carries on from the phrase it was on**.
 - say it all in one go: "Hey Exam Mate, what does that mean?"
 - use the **ask button** on the reading screen (tap, hold 1 s, or hold 3 s, your choice. Holding gives a ding and a buzz).
-- optionally, **triple-press your earbuds** (needs earbuds that send "previous track" for three presses).
 
 **You do not need to learn commands.** Whatever you say goes to the AI, which works out whether you want a question answered or the reader controlled, in your own words: "could you try going faster", "I didn't catch that", "hold on a sec", "skip ahead", "you're going too quick", "carry on", "that's enough". It can repeat, go back, skip ahead, pause, continue, stop, and speed up or slow down. If the internet is down, plain one-word commands (next, repeat, pause...) still work.
 
 Notes:
-- Holding an earbud for 3 seconds **cannot** be detected by any app. The phone keeps that for its own assistant. That is why the on-screen hold, the wake phrase and the triple-press exist.
-- It only listens while a reading session is open and the app is on screen. It stops when you lock the screen. Earbuds work best, otherwise the phone's speaker can confuse it.
-- It uses the phone's speech recognition (Google on Android), which may send audio to Google. The setting is off until the student turns it on.
+- Headset controls use the standard media actions exposed by the phone: next track advances one phrase, previous track goes back, and rewind repeats the current phrase when exposed. Optionally, **Use headset play/pause button to Ask** makes a play/pause press while reading open voice Ask instead of pausing; when already paused, Play resumes normally. This is designed to work with a single earbud that exposes the standard multifunction button; headset/OS event routing still varies.
+- A long-press on some headsets is reserved by the operating system for its own assistant; Exam Mate cannot intercept that consistently.
+- Voice Ask listens while a reading session is open and Exam Mate is on screen. Reading audio and native media controls are separate from microphone listening; the app stops its mic session when it goes to the background. Earbuds help reduce the phone speaker feeding back into the microphone.
+- It uses the phone's speech-recognition service (provider varies by OS/device), which may send audio to that provider. The setting is off until the student turns it on.
 - Questions use the same Gemini key as photos: students use their own, you use the server's. Answers are saved in History.
 
-## Reading aloud on Android
-The Android app does not have the browser's speech feature, so it uses the phone's own **Text-to-speech** engine (through the `@capacitor-community/text-to-speech` plugin). It goes to your earbuds like any other sound. If the app says **"No speech voice found"**, open the phone's **Settings > Text-to-speech output**, choose or install an engine (Google Speech Services is the usual one), then press Resume.
+## Reading aloud on Android and iPhone
+Native builds use the operating system text-to-speech engine through Capacitor. Android uses the selected system TTS engine and installed language data. iPhone uses Apple system voices. Spoken output follows the audio route selected by the operating system, including paired Bluetooth, USB-C, Lightning and compatible wired headsets. If Android reports **"No speech voice found"**, open **Settings > Text-to-speech output**, choose an engine, install voice data for the reading language, return to Exam Mate and press Resume. On iPhone, check that the phone's system voice for the selected language is available in Settings > Accessibility > Spoken Content. The iPhone speech recognizer separately requires microphone and speech-recognition permission. Recognition uses the requested device language (or a same-language regional variant); it does not silently switch to a different language. Voice Ask on Android also requires an enabled system speech-recognition service (commonly Google Speech Services) with the required language model downloaded.
 
 ## Tests
 `npm test` runs the reading engine, text splitting, native speech, the voice assistant (wake phrase, commands, interrupt and resume), and the server tests (licenses, device binding, forged tokens, owner sign-in, student keys, brute force). `npm run typecheck` checks types.
@@ -143,7 +173,12 @@ The Android app does not have the browser's speech feature, so it uses the phone
 - **Admin sign-in says "Request failed" or "The server hit a problem"**: open `/api/health` on your site. The usual cause is the database settings: `UPSTASH_REDIS_REST_URL` must be the **REST URL** (starts with `https://`) and `UPSTASH_REDIS_REST_TOKEN` the **REST Token**, each enabled for Production, then **Redeploy**. Use your main address (`exam-mate-one.vercel.app`), not a long one-off deployment address, because variables can differ per environment.
 - **`/admin` shows 404**: the new code is not deployed yet, or Vercel is serving an old build. Check the latest deployment is green, and that Output Directory is not overridden.
 - **"The server is missing its settings"**: `TOKEN_SECRET` is not set. Add it and redeploy.
-- **"Network error" in the Android app**: `NEXT_PUBLIC_API_URL` is missing from `.env.local`, or you did not run `npm run cap:sync` after adding it.
+- **"Network error" in a native app**: `NEXT_PUBLIC_API_URL` is missing from `.env.local`, or you did not run `npm run cap:sync` after adding it.
 - **Wrong password / blocked**: after 8 wrong attempts an IP is blocked for 10 minutes.
 - **Student: "already used on another device"**: they changed or reset their phone. Use **Reset device**.
 - **Photos fail with a Gemini message**: the student's key was refused or their free allowance is used up. They can change it in Settings.
+
+
+### Headset Ask shortcut
+
+While a reading session is active and **Ask questions by voice** is enabled, open **Settings → Voice assistant** and turn on **Use headset play/pause button to Ask**. Press the headset's main multifunction/play-pause button once while Exam Mate is reading. The reader pauses and voice capture starts; ask your question after the listening cue. The answer is spoken and reading resumes at the interrupted phrase. When the reader is already paused, Play resumes normally. Previous track remains Back and Next track remains Next. This is designed for one-earbud use, but depends on the headset and operating system forwarding a standard play/pause event. Keep Exam Mate active in the foreground; controls reserved by Siri/Google Assistant or headset firmware cannot be intercepted.

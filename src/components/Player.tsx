@@ -1,11 +1,11 @@
 'use client';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import type { ReaderEngine, Snapshot } from '../lib/engine';
+import { NO_VOICE, type ReaderEngine, type Snapshot } from '../lib/engine';
 import { useCountdown } from '../hooks/useEngine';
 import VoiceDock, { type VoiceProps } from './VoiceDock';
 import { Icon } from './ui';
 
-export default function Player({ engine, snap, voice }: { engine: ReaderEngine; snap: Snapshot; voice?: VoiceProps | null }) {
+export default function Player({ engine, snap, voice, onOpenTtsInstall }: { engine: ReaderEngine; snap: Snapshot; voice?: VoiceProps | null; onOpenTtsInstall?: () => void }) {
   const [write, setWrite] = useState(false);
   const left = useCountdown(snap.gapEndsAt);
   const activeRef = useRef<HTMLButtonElement | null>(null);
@@ -54,6 +54,9 @@ export default function Player({ engine, snap, voice }: { engine: ReaderEngine; 
             </div>
             <p className="phrase sm" key={snap.idx}>{snap.finished ? 'Finished.' : phrase}</p>
             {status && <p className="status">{status}</p>}
+            {snap.hint === NO_VOICE && onOpenTtsInstall && (
+              <button className="btn tinted sheet-repeat" onClick={onOpenTtsInstall}>Install / manage speech voices</button>
+            )}
           </div>
         ) : (
           <>
@@ -67,6 +70,9 @@ export default function Player({ engine, snap, voice }: { engine: ReaderEngine; 
               )}
             </div>
             <p className="status" aria-live="polite">{status || '\u00a0'}</p>
+            {snap.hint === NO_VOICE && onOpenTtsInstall && (
+              <button className="btn tinted sheet-repeat" onClick={onOpenTtsInstall}>Install / manage speech voices</button>
+            )}
 
             {lines.length > 1 && (
               <div className="qlist">
