@@ -5,6 +5,8 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Exam Mate',
   description: 'Snap the questions. Exam Mate reads the answers slowly so you can write them down.',
+  // Lets iPhone users add the site to their Home Screen and open it full screen, like an app.
+  appleWebApp: { capable: true, title: 'Exam Mate' },
 };
 
 export const viewport: Viewport = {
