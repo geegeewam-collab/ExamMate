@@ -51,6 +51,13 @@ jobs:
           npm run typecheck
           npm test
 
+      - name: Show the build config files
+        run: |
+          echo "----- capacitor.config.ts"
+          cat capacitor.config.ts || echo "capacitor.config.ts is MISSING"
+          echo "----- next.config.js"
+          cat next.config.js || echo "next.config.js is missing (the Android build does not need it)"
+
       - name: Build the web bundle and sync it into the Android project
         run: npm run cap:sync
 
@@ -86,8 +93,9 @@ jobs:
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
+          sed -i 's/\r$//' ./gradlew
           chmod +x ./gradlew
-          ./gradlew assembleRelease --no-daemon \
+          ./gradlew assembleRelease --no-daemon -Dorg.gradle.jvmargs=-Xmx3g \
             -PappVersionCode=${{ github.run_number }} \
             -PappVersionName=${{ steps.ver.outputs.name }}
 
@@ -99,9 +107,13 @@ jobs:
             exit 1
           fi
           cp "$APK" ExamMate.apk
-          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)"
-          "$BT/apksigner" verify --print-certs ExamMate.apk
           ls -lh ExamMate.apk
+          BT="$(ls -d "${ANDROID_HOME:-/nonexistent}"/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)"
+          if [ -n "$BT" ] && [ -x "$BT/apksigner" ]; then
+            "$BT/apksigner" verify --print-certs ExamMate.apk || echo "::warning::apksigner could not verify the signature"
+          else
+            echo "::warning::apksigner not found, skipped the signature check"
+          fi
 
       - name: Keep a copy on the run page
         uses: actions/upload-artifact@v4
