@@ -4,7 +4,7 @@
 // The export build does not depend on the repo's next.config.js: while it runs, every Next.js config file is
 // set aside and a known-good export config is used instead, so a missing, renamed or edited config cannot
 // stop the native app from being built. Everything is put back afterwards.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 const HIDE = ['app/api', 'app/admin', 'app/download'];
@@ -14,6 +14,27 @@ const STASH = '.export-hidden';
 const platform = process.argv[2] || 'android';
 const noSync = process.argv.includes('--no-sync');
 if (!['android', 'ios'].includes(platform)) throw new Error(`Unsupported Capacitor target: ${platform}`);
+
+// The app talks to your hosted site, and Next.js bakes that address into the app at build time. Read it the way
+// "next build" will (process environment first, then .env.production.local, .env.local, .env.production, .env)
+// and stop before building if it is missing, so an app that cannot reach the server is never produced.
+try {
+  const { default: nextEnv } = await import('@next/env');
+  nextEnv.loadEnvConfig(process.cwd(), false, { info() {}, error() {} });
+} catch { /* only the process environment is available */ }
+const apiUrl = (process.env.NEXT_PUBLIC_API_URL || '').trim().replace(/\/+$/, '');
+if (!/^https?:\/\/[^\s/]+/.test(apiUrl)) {
+  throw new Error('NEXT_PUBLIC_API_URL is missing or is not a web address. The app needs it to reach your server. ' +
+    'Set it to your deployed site, for example https://exam-mate-one.vercel.app, in .env.local on your computer, ' +
+    'or as a Variable named NEXT_PUBLIC_API_URL in GitHub (Settings, Secrets and variables, Actions, Variables).');
+}
+process.env.NEXT_PUBLIC_API_URL = apiUrl;
+console.log(`The app will talk to: ${apiUrl}`);
+
+const bakedIn = (dir, text) => readdirSync(dir, { withFileTypes: true }).some((e) => {
+  const p = `${dir}/${e.name}`;
+  return e.isDirectory() ? bakedIn(p, text) : e.name.endsWith('.js') && readFileSync(p, 'utf8').includes(text);
+});
 
 const run = (cmd, args, env = {}) => {
   const r = spawnSync(cmd, args, { stdio: 'inherit', shell: process.platform === 'win32', env: { ...process.env, ...env } });
@@ -49,6 +70,10 @@ try {
 
 if (!existsSync('out/index.html')) {
   throw new Error('The static export did not create out/index.html. Check the "next build" output above for errors.');
+}
+
+if (!existsSync('out/_next') || !bakedIn('out/_next', apiUrl)) {
+  throw new Error(`The app was built without the server address ${apiUrl}. Check NEXT_PUBLIC_API_URL and build again.`);
 }
 
 if (!noSync) {

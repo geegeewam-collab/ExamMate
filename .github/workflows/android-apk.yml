@@ -59,6 +59,9 @@ jobs:
           cat next.config.js || echo "next.config.js is missing (the Android build does not need it)"
 
       - name: Build the web bundle and sync it into the Android project
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || secrets.NEXT_PUBLIC_API_URL || 'https://exam-mate-one.vercel.app' }}
+          NEXT_PUBLIC_SUPPORT_URL: ${{ vars.NEXT_PUBLIC_SUPPORT_URL || secrets.NEXT_PUBLIC_SUPPORT_URL || '' }}
         run: npm run cap:sync
 
       - name: Work out the version
