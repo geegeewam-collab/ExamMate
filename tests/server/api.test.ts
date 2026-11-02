@@ -171,6 +171,10 @@ test('a student cannot turn a license token into an owner token', async () => {
 
 /* ---------------- /api/answer ---------------- */
 const STUDENT_KEY = 'AIzaStudentOwnKey_1234567890abcdef';
+/** What a photographed paper asks Google for: step 1 reads the questions, step 2 answers numbered ones. */
+const isReadStep = (body: any) => String(body.contents[0].parts[0].text).includes('List every question');
+const numbered = (body: any) => [...String(body.contents[0].parts[0].text).matchAll(/^(\d+)\. \[([^\]]+)\]/gm)].map((m) => ({ n: Number(m[1]), label: m[2] }));
+const reply = (o: unknown) => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(o) }] } }] }));
 const fakeGemini = (status = 200, answer = 'Four') => {
   const calls: { url: string; key: string | null }[] = [];
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -178,7 +182,8 @@ const fakeGemini = (status = 200, answer = 'Four') => {
     calls.push({ url: u, key: new Headers(init?.headers).get('x-goog-api-key') });
     if (u.includes('/models?')) return new Response(JSON.stringify({ models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }] }));
     if (status !== 200) return new Response(JSON.stringify({ error: { message: status === 400 ? 'API key not valid. Please pass a valid API key.' : 'boom' } }), { status });
-    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ questions: [{ label: 'Question 1', answer }] }) }] } }] }));
+    const body = JSON.parse(String(init?.body));
+    return isReadStep(body) ? reply({ questions: [{ label: 'Question 1', text: 'What is two plus two?' }] }) : reply({ answers: [{ n: 1, answer }] });
   }) as typeof fetch;
   return calls;
 };
@@ -259,6 +264,113 @@ test('answer: oversized request and burst limit', async () => {
   assert.equal((await handleAnswer(big, st)).status, 413);
   for (let i = 0; i < 12; i++) assert.equal((await handleAnswer(ans(withKey(h)), st)).status, 200);
   assert.equal((await handleAnswer(ans(withKey(h)), st)).status, 429, 'the 13th in 10 minutes is refused');
+});
+
+/* ---------------- /api/answer: a whole exam paper ---------------- */
+import { groupSize, NO_ANSWER, MAX_QUESTIONS } from '../../server/answer';
+
+/**
+ * Fake Google for a paper with `count` questions. Step 1 lists them; step 2 answers whichever numbered questions it is given,
+ * by default with "Answer to <its label>" so a wrong match between question and answer is visible.
+ */
+const fakePaper = (count: number, answerGroup: (given: { n: number; label: string }[], model: string, body: any) => Response | unknown[] = (g) => g.map((q) => ({ n: q.n, answer: `Answer to ${q.label}` }))) => {
+  const seen: { step: 'read' | 'answer'; model: string; body: any; given: { n: number; label: string }[] }[] = [];
+  let inFlight = 0;
+  let peak = 0;
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes('/models?')) return new Response(JSON.stringify({ models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }] }));
+    const body = JSON.parse(String(init?.body));
+    const model = u.match(/models\/([^:]+):/)![1];
+    const read = isReadStep(body);
+    const given = read ? [] : numbered(body);
+    seen.push({ step: read ? 'read' : 'answer', model, body, given });
+    inFlight++; peak = Math.max(peak, inFlight);
+    await new Promise((r) => setTimeout(r, 25));
+    inFlight--;
+    if (read) return reply({ questions: Array.from({ length: count }, (_, i) => ({ label: `Question ${i + 1}`, text: `Text of question ${i + 1}` })) });
+    const out = answerGroup(given, model, body);
+    return out instanceof Response ? out : reply({ answers: out });
+  }) as typeof fetch;
+  return Object.assign(seen, { peak: () => peak, answers: () => seen.filter((s) => s.step === 'answer'), reads: () => seen.filter((s) => s.step === 'read') });
+};
+const paper = async (count: number, style: 'quick' | 'learn' = 'quick', answerGroup?: Parameters<typeof fakePaper>[1]) => {
+  const { st, h } = await activated();
+  const seen = fakePaper(count, answerGroup);
+  const res = await handleAnswer(ans(withKey(h), { images: [img, img], style }), st);
+  return { seen, res, data: await res.json() };
+};
+
+test('paper: 15 questions are read once, then answered in groups at the same time', async () => {
+  const { seen, res, data } = await paper(15);
+  assert.equal(res.status, 200);
+  assert.equal(seen.reads().length, 1, 'the photos are read once');
+  assert.deepEqual(seen.answers().map((a) => a.given.length).sort(), [7, 8], '15 questions in two groups of at most 8');
+  assert.ok(seen.peak() >= 2, 'the groups ran together, not one after another');
+  assert.equal(data.items.length, 15);
+  assert.equal(data.partial, 0);
+  data.items.forEach((it: any, i: number) => assert.deepEqual(it, { label: `Question ${i + 1}`, answer: `Answer to Question ${i + 1}` }, `question ${i + 1} got its own answer, in order`));
+  assert.equal(data.text.split('\n').length, 15);
+  assert.equal(data.text.split('\n')[14], 'Question 15. Answer to Question 15');
+});
+
+test('paper: every call asks the model to think as little as it can, and the answer calls keep the photos for diagrams', async () => {
+  const { seen } = await paper(15);
+  for (const c of seen) assert.deepEqual(c.body.generationConfig.thinkingConfig, { thinkingBudget: 0 }, 'gemini 2.5 gets thinkingBudget 0');
+  for (const a of seen.answers()) assert.equal(a.body.contents[0].parts.filter((p: any) => p.inline_data).length, 2, 'both photos are attached');
+  assert.equal(seen.answers()[0].model, seen.reads()[0].model, 'the model that read the photo answers first');
+});
+
+test('paper: learn mode writes more per question, so its groups are smaller', async () => {
+  const { seen, data } = await paper(15, 'learn');
+  assert.deepEqual(seen.answers().map((a) => a.given.length), [5, 5, 5]);
+  assert.equal(groupSize('learn'), 5);
+  assert.equal(data.items.length, 15);
+  assert.match(seen.answers()[0].body.contents[0].parts[0].text, /method in a few short steps/);
+});
+
+test('paper: a group that fails leaves the other answers intact and marks only its own questions', async () => {
+  const { res, data } = await paper(15, 'quick', (given) => (given.some((q) => q.label === 'Question 9') ? new Response('{}', { status: 500 }) : given.map((q) => ({ n: q.n, answer: `Answer to ${q.label}` }))));
+  assert.equal(res.status, 200, 'some answers are better than an error screen');
+  assert.equal(data.items.length, 15);
+  assert.equal(data.partial, 7);
+  assert.equal(data.items[0].answer, 'Answer to Question 1');
+  assert.equal(data.items[7].answer, 'Answer to Question 8');
+  for (let i = 8; i < 15; i++) assert.deepEqual(data.items[i], { label: `Question ${i + 1}`, answer: NO_ANSWER });
+});
+
+test('paper: answers are matched by number, so a shuffled or skipped answer cannot land on the wrong question', async () => {
+  const { data } = await paper(5, 'quick', (given) => given.filter((q) => q.n !== 2).reverse().map((q) => ({ n: q.n, answer: `Answer to ${q.label}` })));
+  assert.deepEqual(data.items.map((i: any) => i.answer), ['Answer to Question 1', NO_ANSWER, 'Answer to Question 3', 'Answer to Question 4', 'Answer to Question 5']);
+  assert.equal(data.partial, 1);
+});
+
+test('paper: when no group can be answered the student gets the real reason, not a blank', async () => {
+  const { res, data } = await paper(15, 'quick', () => new Response(JSON.stringify({ error: { message: 'quota' } }), { status: 429 }));
+  assert.equal(res.status, 429);
+  assert.equal(data.code, 'student_limit');
+  assert.match(data.detail, /answering 15 questions/);
+});
+
+test('paper: a photo with no questions is explained without spending the answer calls', async () => {
+  const { seen, res, data } = await paper(0);
+  assert.equal(res.status, 422);
+  assert.match(data.error, /No questions were found/);
+  assert.equal(seen.answers().length, 0);
+});
+
+test('paper: a paper is capped at MAX_QUESTIONS questions', async () => {
+  const { seen, data } = await paper(MAX_QUESTIONS + 20);
+  assert.equal(data.items.length, MAX_QUESTIONS);
+  assert.equal(seen.answers().reduce((n, a) => n + a.given.length, 0), MAX_QUESTIONS);
+});
+
+test('paper: when the photo cannot be read at all the message says so and the detail names the step', async () => {
+  const { st, h } = await activated();
+  fakeGemini(500);
+  const r = await handleAnswer(ans(withKey(h)), st);
+  assert.equal(r.status, 502);
+  assert.match((await r.json()).detail, /^reading the photo/);
 });
 
 /* ---------------- /api/ask (voice questions and commands) ---------------- */

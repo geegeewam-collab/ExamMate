@@ -26,32 +26,80 @@ export async function models(key: string): Promise<string[]> {
 }
 export const resetModelCache = () => { cache = null; working.clear(); };
 
-export const prompt = (mode: string) => `The attached images are photos of a page of questions, in order. Answer every question you can read.
-Your answers will be read aloud by a text-to-speech voice and written down by hand, so:
-- Plain text only: no markdown, asterisks, hashes, tables or LaTeX. Never use line breaks inside an answer.
-- label: the question number as shown in the photo, like "Question 1" or "Question 2 b".
-- answer: ${mode === 'learn' ? 'the answer, then the method in a few short steps, then one short worked example. Keep it clear and easy to follow when spoken.' : 'just the answer, as briefly as the question allows. For calculations give the final result only.'}
-- Write maths and symbols as words, for example "x squared plus 3" or "five over eight".
-- For multiple choice, say the letter and then the option text.
-- If a question is unreadable or something is missing, say so in one short sentence as its answer.
+/*
+ * A photographed exam is answered in two steps so that a long paper costs no more time per question than a short one:
+ *   1. READ: one call with the photos lists the questions (short output, so it is quick).
+ *   2. ANSWER: the questions are split into small groups and every group is answered at the same time.
+ * One big call that reads, thinks about and answers 15 questions in a single response is what used to run out of time.
+ */
+
+export interface ExamQuestion { label: string; text: string }
+
+export const readPrompt = `The attached images are photos of a page of questions, in order. List every question you can read, in the order they appear. Do not answer anything.
+- label: the question number as shown in the photo, like "Question 1" or "Question 2 b". If a question has parts such as (a), (b) or (i), (ii), give each part its own item. If the numbering starts again in a new section, put the section first, like "Section B, Question 1 a".
+- text: the full wording of that question, copied as written, keeping words like THREE or FOUR. For a part, start with the lead-in sentence of its question so the part makes sense on its own. Leave out marks such as (3 marks), section headings and exam instructions.
+- If a number is cut off at the edge of the photo, carry on the numbering from the question before it. Never skip a question because its number is missing.
+- If part of a question is unreadable, copy what you can and write [unreadable] for the rest. If it depends on a diagram or table, end its text with [see diagram].
 - Do not add extra questions, an introduction or commentary.`;
 
-export const schema = {
+export const readSchema = {
   type: 'OBJECT',
-  properties: { questions: { type: 'ARRAY', items: { type: 'OBJECT', properties: { label: { type: 'STRING' }, answer: { type: 'STRING' } }, required: ['label', 'answer'] } } },
+  properties: { questions: { type: 'ARRAY', items: { type: 'OBJECT', properties: { label: { type: 'STRING' }, text: { type: 'STRING' } }, required: ['label', 'text'] } } },
   required: ['questions'],
 };
 
-export function parse(raw: string): { label: string; answer: string }[] {
+/** The questions the model read. `null` means the reply was not usable; an empty list means it read the photo but found no questions. */
+export function parseQuestions(raw: string): ExamQuestion[] | null {
   try {
     const q = JSON.parse(raw).questions;
-    return (Array.isArray(q) ? q : [])
-      .map((x: any) => ({ label: String(x.label ?? '').replace(/[.\s]+$/, '').trim(), answer: String(x.answer ?? '').replace(/\s+/g, ' ').trim() }))
-      .filter((x) => x.answer);
+    if (!Array.isArray(q)) return null;
+    return q
+      .map((x: any) => ({ label: String(x.label ?? '').replace(/[.\s]+$/, '').trim(), text: String(x.text ?? '').replace(/\s+/g, ' ').trim() }))
+      .filter((x) => x.text);
   } catch {
-    return [];
+    return null;
   }
 }
+
+export const answerPrompt = (mode: string, questions: ExamQuestion[]) => `The attached images are photos of an exam page. Use them only to see a diagram, table or detail that the wording below leaves out. Answer ONLY the numbered questions listed below, one answer each.
+Your answers will be read aloud by a text-to-speech voice and written down by hand, so:
+- Plain text only: no markdown, asterisks, hashes, tables or LaTeX. Never use line breaks inside an answer.
+- n: the number of the question, exactly as numbered in the list below.
+- answer: ${mode === 'learn' ? 'the answer, then the method in a few short steps, then one short worked example. Keep it clear and easy to follow when spoken.' : 'just the answer, as briefly as the question allows. For calculations give the final result only.'}
+- When a question asks for a number of points (for example THREE advantages), give exactly that many.
+- Write maths and symbols as words, for example "x squared plus 3" or "five over eight".
+- For multiple choice, say the letter and then the option text.
+- If a question is unreadable or something is missing, say so in one short sentence as its answer.
+- Do not add extra questions, an introduction or commentary.
+
+Questions:
+${questions.map((q, i) => `${i + 1}. [${q.label}] ${q.text}`).join('\n')}`;
+
+export const answerSchema = {
+  type: 'OBJECT',
+  properties: { answers: { type: 'ARRAY', items: { type: 'OBJECT', properties: { n: { type: 'INTEGER' }, answer: { type: 'STRING' } }, required: ['n', 'answer'] } } },
+  required: ['answers'],
+};
+
+/** Answers by question number (1-based, as numbered in the prompt), so a reordered or skipped answer can never land on the wrong question. */
+export function parseAnswers(raw: string): Map<number, string> | null {
+  try {
+    const a = JSON.parse(raw).answers;
+    if (!Array.isArray(a)) return null;
+    const out = new Map<number, string>();
+    for (const x of a) {
+      const n = Number(x?.n);
+      const text = String(x?.answer ?? '').replace(/\s+/g, ' ').trim();
+      if (Number.isInteger(n) && text && !out.has(n)) out.set(n, text);
+    }
+    return out.size ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/** All the text of a Gemini reply, joined. */
+export const replyText = (d: any): string => (d?.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text || '').join('').trim();
 
 export interface GeminiFail { status: number; msg: string }
 

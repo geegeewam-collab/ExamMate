@@ -1,11 +1,23 @@
 import { verify, type Store } from './license';
 import { json, secret } from './http';
-import { describeFailure, generate, parse, prompt, schema } from './gemini';
+import { answerPrompt, answerSchema, describeFailure, generate, parseAnswers, parseQuestions, readPrompt, readSchema, replyText, type GeminiFail } from './gemini';
 
 const fail = (code: string, error: string, status: number, detail = '') =>
   json({ code, error, detail: String(detail).slice(0, 240) }, status);
 
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,200}$/;
+
+// The route may run for 60 s on Vercel. A typical paper takes 10 to 25 s; these limits only matter when Google is slow, and
+// they keep the worst case (read, then answer) inside the 60 s with room for the license check and the reply.
+export const TOTAL_MS = 52_000;
+export const READ_CALL_MS = 18_000;
+export const READ_TOTAL_MS = 24_000;
+export const ANSWER_CALL_MS = 24_000;
+/** A paper can have at most this many questions; more than this is not an exam page. */
+export const MAX_QUESTIONS = 30;
+/** Questions answered per Google call. Learn mode writes much more per question, so its groups are smaller. */
+export const groupSize = (style: 'quick' | 'learn') => (style === 'learn' ? 5 : 8);
+export const NO_ANSWER = 'No answer came back for this question. Try the photo again.';
 
 /**
  * POST /api/answer: photos in, spoken-style answers out. Only for devices with a valid license.
@@ -39,27 +51,66 @@ export async function handleAnswer(req: Request, store: Store): Promise<Response
   const images: string[] = Array.isArray(body.images) ? body.images.slice(0, 3) : [];
   if (!images.length) return fail('bad', 'No photo received.', 400);
 
-  const parts: any[] = [{ text: prompt(body.style === 'learn' ? 'learn' : 'quick') }];
+  const style: 'quick' | 'learn' = body.style === 'learn' ? 'learn' : 'quick';
+  const started = Date.now();
+
+  const photos: any[] = [];
   for (const img of images) {
     const m = typeof img === 'string' && img.length < 2_500_000 && img.match(/^data:(image\/(?:jpeg|png|webp));base64,/);
     if (!m) return fail('bad', "That image can't be used. Try another photo.", 400);
-    parts.push({ inline_data: { mime_type: m[1], data: img.slice(m[0].length) } });
+    photos.push({ inline_data: { mime_type: m[1], data: img.slice(m[0].length) } });
   }
 
-  const out = await generate(
+  // Step 1: read the photos and list the questions (short output, so it is quick).
+  const read = await generate(
     apiKey,
-    { contents: [{ parts }], generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: schema } },
-    (d) => {
-      const raw = (d.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text || '').join('').trim();
-      const items = parse(raw);
-      return items.length ? items : null;
-    },
-    { timeoutMs: 40_000, deadlineMs: 52_000 },
+    { contents: [{ parts: [{ text: readPrompt }, ...photos] }], generationConfig: { temperature: 0, maxOutputTokens: 6000, responseMimeType: 'application/json', responseSchema: readSchema } },
+    (d) => parseQuestions(replyText(d)),
+    { timeoutMs: READ_CALL_MS, deadlineMs: READ_TOTAL_MS, noThinking: true },
   );
-  if (out.ok) {
-    const text = out.value.map((i) => (i.label ? i.label + '. ' : '') + i.answer).join('\n');
-    return json({ items: out.value, text, model: out.model });
+  if (!read.ok) {
+    const f = describeFailure(read.last, auth.owner);
+    return fail(f.code, f.error, f.status, `reading the photo: ${read.last.msg}`);
   }
-  const f = describeFailure(out.last, auth.owner);
-  return fail(f.code, f.error, f.status, out.last.msg);
+  const questions = read.value.slice(0, MAX_QUESTIONS);
+  if (!questions.length) return fail('empty', 'No questions were found in that photo. Try a clearer, closer shot.', 422);
+
+  // Step 2: answer the questions in small groups, all at once. The model that just worked goes first.
+  const size = groupSize(style);
+  const groups: (typeof questions)[] = [];
+  for (let i = 0; i < questions.length; i += size) groups.push(questions.slice(i, i + size));
+  const left = Math.max(10_000, TOTAL_MS - (Date.now() - started));
+
+  const done = await Promise.all(
+    groups.map((group) =>
+      generate(
+        apiKey,
+        { contents: [{ parts: [{ text: answerPrompt(style, group) }, ...photos] }], generationConfig: { temperature: 0.2, maxOutputTokens: 4000, responseMimeType: 'application/json', responseSchema: answerSchema } },
+        (d) => parseAnswers(replyText(d)),
+        { models: [read.model], timeoutMs: ANSWER_CALL_MS, deadlineMs: left, noThinking: true },
+      ),
+    ),
+  );
+
+  const items: { label: string; answer: string }[] = [];
+  let missing = 0;
+  let lastFail: GeminiFail | undefined;
+  for (let g = 0; g < groups.length; g++) {
+    const r = done[g];
+    if (!r.ok) lastFail = r.last;
+    for (let i = 0; i < groups[g].length; i++) {
+      const answer = r.ok ? r.value.get(i + 1) : undefined;
+      if (!answer) missing++;
+      items.push({ label: groups[g][i].label, answer: answer || NO_ANSWER });
+    }
+  }
+
+  // Nothing answered at all: explain why. Some answered: give those, and mark only the missing ones.
+  if (missing === items.length) {
+    const why: GeminiFail = lastFail ?? { status: 502, msg: 'the model sent back no usable answers' };
+    const f = describeFailure(why, auth.owner);
+    return fail(f.code, f.error, f.status, `answering ${questions.length} questions: ${why.msg}`);
+  }
+  const text = items.map((i) => (i.label ? i.label + '. ' : '') + i.answer).join('\n');
+  return json({ items, text, model: read.model, partial: missing });
 }
