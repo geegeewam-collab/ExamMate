@@ -22,4 +22,13 @@ test('Android export refuses to build without native TTS registration', () => {
   const script = readFileSync(join(root, 'scripts/export.mjs'), 'utf8');
   assert.match(script, /Android text-to-speech is not linked into the native project/);
   assert.match(script, /capacitor-community-text-to-speech/);
+  assert.match(script, /capacitor\.plugins\.json/);
+  assert.match(script, /generated Capacitor Android plugin registry does not contain/);
+});
+
+
+test('iOS release metadata follows the package version', () => {
+  const script = readFileSync(join(root, 'scripts/setup-ios.mjs'), 'utf8');
+  assert.match(script, /const appBuild = '8'/);
+  assert.match(script, /packageMeta\.version \|\| '2\.1\.6'/);
 });

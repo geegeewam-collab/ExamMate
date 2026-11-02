@@ -95,6 +95,17 @@ if (!noSync) {
         !appGradle.includes("implementation project(':capacitor-community-text-to-speech')")) {
       throw new Error('Android text-to-speech is not linked into the native project. Check @capacitor-community/text-to-speech installation, then run npm run cap:sync again. The APK was not built.');
     }
+
+    // A Gradle dependency alone is not enough: Capacitor also needs its generated
+    // native plugin registry to inject the plugin into the WebView at runtime.
+    const pluginRegistryPath = 'android/app/src/main/assets/capacitor.plugins.json';
+    if (!existsSync(pluginRegistryPath)) {
+      throw new Error(`Capacitor did not generate ${pluginRegistryPath}. Run npm run cap:sync again; no APK was built.`);
+    }
+    const pluginRegistry = readFileSync(pluginRegistryPath, 'utf8');
+    if (!/text-to-speech|com\.getcapacitor\.community\.tts|TextToSpeechPlugin/i.test(pluginRegistry)) {
+      throw new Error('The generated Capacitor Android plugin registry does not contain the native text-to-speech plugin. Check the dependency and run npm run cap:sync again; no APK was built.');
+    }
   }
   if (platform === 'ios') run('node', ['scripts/setup-ios.mjs']);
 }

@@ -100,7 +100,7 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
 
     // TextToSpeech is created asynchronously by Android. A first language query
     // can legitimately be empty while its service is still initializing.
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let attempt = 0; attempt < 9; attempt++) {
       let available: string[] = [];
       try {
         available = (await tts.getSupportedLanguages?.())?.languages ?? [];
@@ -123,7 +123,7 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
       }
 
       if (available.length) break; // The engine is ready; none of the requested languages is installed.
-      if (attempt < 3) await wait(250);
+      if (attempt < 8) await wait(Math.min(1500, 300 + attempt * 175));
     }
 
     if (lastError) throw new Error(lastError);
@@ -152,9 +152,9 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
   };
 
   return {
-    // The phone's speech engine can need several seconds to wake up the first time. Every native call
-    // above is bounded (about 10 s in total), so this only has to outlast them.
-    startTimeoutMs: 12000,
+    // Android speech services can take several seconds to initialise on a cold start.
+    // Keep the engine's watchdog longer than the bounded plugin/language/listener checks below.
+    startTimeoutMs: 20000,
     speak(text, { rate }, h) {
       const request = ++generation;
       void (async () => {
@@ -174,7 +174,7 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
 
         let lang: string;
         try {
-          lang = await withTimeout(pickLanguage(tts), 5000, 'Speech language check');
+          lang = await withTimeout(pickLanguage(tts), 10500, 'Speech language check');
         } catch (error) {
           // A slow or stuck language probe is not proof that speaking will fail. Try the phone's own
           // language and let speak() report a real error if that is wrong. Real "no voice" errors still surface.
@@ -201,7 +201,7 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
         // Some Android vendors / older TTS engines expose the listener but do
         // not emit range callbacks. Keep a bounded fallback so those devices
         // still work; an actual native rejection is always surfaced below.
-        startFallbackTimer = setTimeout(markStarted, 1400);
+        startFallbackTimer = setTimeout(markStarted, 2200);
 
         try {
           const speaking = tts.speak({
@@ -247,9 +247,15 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
       void pendingStop.catch(() => undefined);
     },
     prime() {
-      // Native TTS has no browser-style autoplay gate. Loading it here is harmless
-      // and avoids paying the dynamic-import cost at the first spoken phrase.
-      void load().then((tts) => { if (tts) native = tts; }).catch(() => undefined);
+      // Native TTS has no browser-style autoplay gate. Start loading and probing the
+      // Android speech service on a user gesture so its cold-start delay happens before
+      // the first phrase (often while the student is choosing or preparing a page).
+      void load().then(async (tts) => {
+        if (!tts) return;
+        native = tts;
+        try { await withTimeout(pickLanguage(tts), 10500, 'Speech engine warm-up'); }
+        catch { /* the real playback attempt retries and reports the useful error */ }
+      }).catch(() => undefined);
     },
   };
 }
@@ -284,10 +290,17 @@ export async function openNativeSpeechInstall(): Promise<boolean> {
 }
 
 /** The right speech engine for where the app is running. */
+// The reader, voice assistant and warm-up action must share the same native
+// controller. Besides serialising utterances, this shares the Android TTS
+// readiness probe, so a warm-up is not wasted on a separate controller.
+let nativeSpeechController: Speech | null = null;
 export function createSpeech(): Speech {
   if (!isNative()) return createWebSpeech();
-  const nav = deviceLang();
-  return createNativeSpeech(loadNativeTTS, [...new Set([nav, nav.split('-')[0], 'en-US'])]);
+  if (!nativeSpeechController) {
+    const nav = deviceLang();
+    nativeSpeechController = createNativeSpeech(loadNativeTTS, [...new Set([nav, nav.split('-')[0], 'en-US'])]);
+  }
+  return nativeSpeechController;
 }
 
 export interface VoiceOption { uri: string; label: string }

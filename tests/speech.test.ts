@@ -60,6 +60,26 @@ test('native speech: falls back to en-US when the phone language has no voice, a
   assert.equal(f.calls.filter((c) => c.startsWith('lang:')).length, 3, 'languages are only probed once');
 });
 
+test('native speech: waits for a slow first Android TTS initialization', async () => {
+  const readyAt = Date.now() + 1900;
+  const plugin = fakePlugin({
+    getSupportedLanguages: async () => Date.now() >= readyAt ? ({ languages: ['en-US'] }) : ({ languages: [] }),
+    isLanguageSupported: async ({ lang }) => ({ supported: Date.now() >= readyAt && lang === 'en-US' }),
+  });
+  const events: string[] = [];
+  const sp = createNativeSpeech(async () => plugin.plugin, ['en-US']);
+  assert.ok((sp.startTimeoutMs ?? 0) >= 20000, 'the reader watchdog must allow Android TTS to cold-start');
+  sp.speak('A first phrase', { rate: 1, voiceURI: '' }, {
+    onstart: () => events.push('start'), onend: () => events.push('end'), onerror: (e) => events.push(`error:${e}`),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 2600));
+  await settle();
+  assert.equal(plugin.spoken[0]?.lang, 'en-US', 'speech should begin once the system voice service finishes initializing');
+  assert.ok(!events.some((event) => event.startsWith('error:')));
+  plugin.start();
+  assert.ok(events.includes('start'));
+});
+
 test('native speech: a failed language lookup is retried instead of cached forever', async () => {
   let installed = false;
   const plugin = fakePlugin({
@@ -155,7 +175,7 @@ test('engine: no speech voice stops with an explanation instead of racing throug
   assert.equal(speech.spoken.length, 2, 'Resume tries again (after the person fixes their phone setting)');
 });
 
-import { deviceLang } from '../src/lib/platform';
+import { createSpeech, deviceLang } from '../src/lib/platform';
 test('deviceLang: cleans odd system locale values', () => {
   assert.equal(deviceLang('en-US'), 'en-US');
   assert.equal(deviceLang('en-US@posix'), 'en-US');
@@ -189,4 +209,21 @@ test('native speech: does not silently read with an unrelated installed language
   await settle();
   assert.deepEqual(events, ['error:unsupported']);
   assert.equal(plugin.spoken.length, 0, 'an unrelated French voice must never be used for Swahili/English text');
+});
+
+
+test('native speech: reader, assistant and pre-warm calls share one controller', () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { Capacitor: { isNativePlatform: () => true, getPlatform: () => 'android' } },
+  });
+  try {
+    const readerSpeech = createSpeech();
+    const assistantSpeech = createSpeech();
+    assert.equal(readerSpeech, assistantSpeech, 'Android playback and warm-up must share the same readiness state');
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'window', original);
+    else delete (globalThis as any).window;
+  }
 });

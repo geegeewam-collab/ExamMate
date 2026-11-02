@@ -15,8 +15,8 @@
 
 ### Fixed (audio and photo)
 - Spoken answers never started on Android and showed "Audio has not started": the native speech plugin was returned straight out of a promise, and Capacitor plugin objects look like promises, so loading never finished. The text-to-speech and media plugins are now wrapped in plain objects.
-- Every native speech step (plugin load, stop, language check, listener) now has its own time limit, so a stuck engine shows a specific reason instead of hanging. The no-audio watchdog waits 12 s for native engines (3.5 s elsewhere) because the phone's engine can be slow on first use. Speech errors now show a short technical reason.
-- "Could not prepare page" on camera photos: image preparation now tries several decoders (bitmap with rotation, plain image element, bitmap without options), recognises the real image type from its bytes, steps the size down until it fits, and sends small photos unchanged if preparation fails. The failure reason is shown under the message. HEIC photos get a clear message.
+- Every native speech step (plugin load, stop, language check, listener) has its own time limit. Android now retries a cold text-to-speech service for up to about 8 seconds, shares the warmed controller between the reader and voice assistant, and uses a 20 s native no-audio watchdog (3.5 s on web) so first-use engine startup is not mistaken for silent playback. Speech errors show a useful reason.
+- "Could not prepare page" on camera/gallery photos: image preparation recognises image bytes and file extensions, tries bitmap, blob URL and FileReader data-URL decoders, and falls back from canvas.toBlob() to canvas.toDataURL(). Small supported JPG/PNG/WebP photos can be sent unchanged when canvas preparation fails; HEIC/AVIF are converted when the device can decode them and otherwise receive a clear format-specific message.
 
 ### Fixed
 - Removed silent three-image and 30-question truncation. All selected pages are processed in sequential request-sized batches without keeping every base64 image in memory at once.
@@ -28,6 +28,18 @@
 
 ### Validation notes
 - Automated regression suites pass in the available runtime. A full dependency-installed Next.js build/typecheck and signed Android build still need to run in the project's normal CI environment.
+
+
+## [2.1.6] - 2026-11-02
+
+### Fixed
+- Reused one native Android speech controller across reader playback, the voice assistant and pre-warm actions so TTS readiness is shared instead of duplicated.
+- Extended Android cold-start language retries and the reader's first-audio watchdog to avoid false "Audio has not started" failures on slower devices.
+- Improved image preparation for Android WebViews with filename-based MIME detection and more resilient decoding/encoding fallbacks.
+- Added a release-build guard that checks the generated Capacitor plugin registry contains the native text-to-speech plugin, not just the Gradle dependency.
+
+### Release metadata
+- Bumped package version to 2.1.6, Android fallback versionCode to 8, and iOS build number to 8.
 
 ## [2.1.5] - 2026-10-31
 
