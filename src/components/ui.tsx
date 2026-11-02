@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from 'react';
 
 export type IconName =
   | 'camera' | 'image' | 'clipboard' | 'doc' | 'play' | 'pause' | 'prev' | 'next' | 'repeat'
-  | 'close' | 'pencil' | 'book' | 'clock' | 'sliders' | 'check' | 'alert' | 'headphones' | 'trash' | 'copy' | 'external' | 'key' | 'mic';
+  | 'close' | 'pencil' | 'book' | 'clock' | 'sliders' | 'menu' | 'chevronDown' | 'search' | 'check' | 'alert' | 'headphones' | 'trash' | 'copy' | 'external' | 'key' | 'mic';
 
 const PATHS: Record<IconName, ReactNode> = {
   camera: (<><path d="M4 8.5h3l1.6-2.2h6.8L17 8.5h3V19H4z" /><circle cx="12" cy="13.4" r="3.4" /></>),
@@ -16,6 +16,9 @@ const PATHS: Record<IconName, ReactNode> = {
   repeat: (<><path d="M20 12a8 8 0 1 1-2.5-5.8" /><path d="M20 4.5v4h-4" /></>),
   close: <path d="M6.5 6.5l11 11M17.5 6.5l-11 11" />,
   pencil: (<><path d="M4.5 19.5l.9-3.9L16 5l3 3L8.4 18.6z" /><path d="M13.8 7.2l3 3" /></>),
+  menu: <path d="M4 6.5h16M4 12h16M4 17.5h16" />,
+  chevronDown: <path d="M6 9l6 6 6-6" />,
+  search: (<><circle cx="10.8" cy="10.8" r="6.8" /><path d="M16 16l4.2 4.2" /></>),
   book: (<><path d="M4 5.8c2.2-1 5-.9 8 .7 3-1.6 5.8-1.7 8-.7v12.7c-2.2-.9-5-.8-8 .8-3-1.6-5.8-1.7-8-.8z" /><path d="M12 6.5V19" /></>),
   clock: (<><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>),
   sliders: (<><path d="M4 7h9M19 7h1M4 17h1M11 17h9" /><circle cx="16" cy="7" r="2.2" /><circle cx="8" cy="17" r="2.2" /></>),

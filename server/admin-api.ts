@@ -1,17 +1,20 @@
 import { createLicenses, normKey, type Store } from './license';
-import { blocked, clientIp, isAdmin, recordFail } from './http';
+import { blocked, clientIp, recordFail } from './http';
+import { authenticateAdmin } from './admin-auth';
 
 const reply = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store, max-age=0' } });
 
-/** Shared by GET/POST/PATCH/DELETE: password check with brute-force protection. */
-async function guard(req: Request, store: Store): Promise<Response | null> {
+/** Admin routes accept short-lived signed sessions, never a password on every request. Guests are strictly read-only. */
+async function guard(req: Request, store: Store, write = false): Promise<Response | null> {
   const ip = clientIp(req);
-  if (await blocked(store, 'badadmin', ip, 8)) return reply({ error: 'Too many wrong passwords. Wait a few minutes.' }, 429);
-  if (!isAdmin(req)) {
+  if (await blocked(store, 'badadmin', ip, 20)) return reply({ error: 'Too many admin requests. Try again later.' }, 429);
+  const session = await authenticateAdmin(req, store);
+  if (!session) {
     await recordFail(store, 'badadmin', ip);
-    return reply({ error: 'Wrong password.' }, 401);
+    return reply({ error: 'Your admin session expired. Sign in again.' }, 401);
   }
+  if (write && session.role !== 'parent') return reply({ error: 'Guest access is read-only. Ask the parent admin to make this change.' }, 403);
   return null;
 }
 
@@ -24,7 +27,7 @@ export async function adminGet(req: Request, store: Store) {
 
 // Create: { label, count?, maxDevices? }
 export async function adminCreate(req: Request, store: Store) {
-  const g = await guard(req, store);
+  const g = await guard(req, store, true);
   if (g) return g;
   const b = await req.json().catch(() => ({}));
   const count = Math.min(Math.max(parseInt(b.count) || 1, 1), 50);
@@ -35,7 +38,7 @@ export async function adminCreate(req: Request, store: Store) {
 
 // Manage: { key, action: 'revoke' | 'restore' | 'reset' | 'rename', label? }
 export async function adminPatch(req: Request, store: Store) {
-  const g = await guard(req, store);
+  const g = await guard(req, store, true);
   if (g) return g;
   const b = await req.json().catch(() => ({}));
   const lic = await store.get(normKey(b.key));
@@ -50,7 +53,7 @@ export async function adminPatch(req: Request, store: Store) {
 }
 
 export async function adminDelete(req: Request, store: Store) {
-  const g = await guard(req, store);
+  const g = await guard(req, store, true);
   if (g) return g;
   const b = await req.json().catch(() => ({}));
   const key = normKey(b.key);

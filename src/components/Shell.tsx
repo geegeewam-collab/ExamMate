@@ -12,12 +12,12 @@ import {
   watchVoices, type VoiceOption,
 } from '../lib/platform';
 import {
-  loadHistory, loadResume, photosToday, saveHistory, type HistoryItem, type Resume, type Settings,
+  loadHistory, loadResume, saveHistory, PACE_PRESETS, type HistoryItem, type Resume, type Settings,
 } from '../lib/settings';
 import { apiBase } from '../lib/config';
 import { GeminiKey, maskKey } from '../services/gemini-key';
 import { LicenseService } from '../services/license-service';
-import { answerPhotos, AnswerError, KeyError, LicenseError } from '../services/answer-service';
+import { answerPhotos, AnswerError, KeyError, LicenseError, type AnswerProgress } from '../services/answer-service';
 import ReadTab, { type Shot } from './ReadTab';
 import HistoryTab from './HistoryTab';
 import SettingsTab from './SettingsTab';
@@ -26,22 +26,23 @@ import GeminiSetup from './GeminiSetup';
 import { Icon, type IconName } from './ui';
 
 type Tab = 'read' | 'history' | 'settings';
-const TABS: { id: Tab; label: string; icon: IconName }[] = [
-  { id: 'read', label: 'Read', icon: 'book' },
-  { id: 'history', label: 'History', icon: 'clock' },
-  { id: 'settings', label: 'Settings', icon: 'sliders' },
+const MENU: { id: Tab; label: string; icon: IconName; description: string }[] = [
+  { id: 'read', label: 'Read', icon: 'book', description: 'Current paper' },
+  { id: 'settings', label: 'Settings', icon: 'sliders', description: 'Reading and voice' },
+  { id: 'history', label: 'History', icon: 'clock', description: 'Saved papers' },
 ];
 
 export default function Shell({
   settings, update, onLocked,
 }: { settings: Settings; update(p: Partial<Settings>): void; onLocked(message: string): void }) {
   const [tab, setTab] = useState<Tab>('read');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [playerVisible, setPlayerVisible] = useState(false);
   const [engine, snap] = useEngine(settings);
   const [text, setText] = useState('');
   const [msg, setMsg] = useState('');
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [resume, setResume] = useState<Resume | null>(null);
-  const [count, setCount] = useState(0);
   const [voices, setVoices] = useState<VoiceOption[]>([]);
   const [shot, setShot] = useState<Shot | null>(null);
   const [owner, setOwner] = useState<boolean | null>(null);
@@ -56,7 +57,7 @@ export default function Shell({
   const galRef = useRef<HTMLInputElement | null>(null);
   const lastText = useRef('');
   const lastFiles = useRef<File[]>([]);
-  const shotUrl = useRef('');
+  const shotUrls = useRef<string[]>([]);
   const busy = useRef(false);
   const ctl = useRef<AbortController | null>(null);
   const live = useRef({ text, snap, settings });
@@ -67,13 +68,16 @@ export default function Shell({
   const { assistant, state: voiceState } = useAssistant({
     settings, engine, snap,
     getContext: () => {
-      const cur = live.current.snap.phrases[live.current.snap.idx] ?? '';
-      return { context: windowAround(lastText.current, cur, 3500), current: cur };
+      const snapshot = live.current.snap;
+      const cur = snapshot.phrases[snapshot.idx] ?? '';
+      const preferredAt = snapshot.phrases.slice(0, snapshot.idx).reduce((n, phrase) => n + phrase.length + 1, 0);
+      return { context: windowAround(lastText.current, cur, 3500, preferredAt), current: cur };
     },
     setRate: (rate) => update({ rate }),
     onAnswered: (q, a) =>
       setHistory((h) => {
-        const n = [{ t: Date.now(), text: `You asked: ${q}\nAnswer: ${a}` }, ...h].slice(0, 20);
+        const entry = `You asked: ${q}\nAnswer: ${a}`;
+        const n = [{ t: Date.now(), title: q.slice(0, 70) || 'Voice question', text: entry }, ...h].slice(0, 20);
         saveHistory(n);
         return n;
       }),
@@ -111,8 +115,16 @@ export default function Shell({
   useEffect(() => {
     setHistory(loadHistory());
     setResume(loadResume());
-    setCount(photosToday());
+    const savedDraft = kv.get<string>('draft_text', '');
+    if (savedDraft) setText(savedDraft);
     return watchVoices(setVoices);
+  }, []);
+  useEffect(() => { kv.set('draft_text', text); }, [text]);
+  useEffect(() => () => {
+    ctl.current?.abort();
+    shotUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    stopKeepAlive();
+    unwake();
   }, []);
 
   const startReading = useCallback(
@@ -122,6 +134,8 @@ export default function Shell({
       if (!engine.start(t, from)) return setMsg('Add some text first, or take a photo of the questions.');
       assistantRef.current.resetConversation();
       lastText.current = t;
+      setPlayerVisible(true);
+      setTab('read');
       setMsg('');
       startKeepAlive();
     },
@@ -132,6 +146,10 @@ export default function Shell({
 
   /* keep the screen awake and the audio alive only while a session is running */
   const running = snap.active && !snap.finished;
+  const currentPace: 'write' | 'balanced' | 'quick' | 'custom' =
+    (Object.keys(PACE_PRESETS) as Array<keyof typeof PACE_PRESETS>).find((key) =>
+      Object.entries(PACE_PRESETS[key]).every(([setting, value]) => settings[setting as keyof Settings] === value),
+    ) ?? 'custom';
   useEffect(() => {
     if (running) void wake();
     else unwake();
@@ -181,37 +199,56 @@ export default function Shell({
     }
   }, [snap.active, snap.finished, snap.idx, snap.state, snap.phrases]);
 
-  /* photo to answers */
+  /* Photo-to-answer flow. Every selected page is retained and processed in request-sized batches. */
   const handlePhotos = useCallback(
     async (files: File[], again = false) => {
       if (!files.length || busy.current) return;
-      lastFiles.current = files;
+      lastFiles.current = [...files];
       busy.current = true;
+      ctl.current?.abort();
       ctl.current = new AbortController();
       void wake();
-      if (!again || !shotUrl.current) {
-        if (shotUrl.current) URL.revokeObjectURL(shotUrl.current);
-        shotUrl.current = URL.createObjectURL(files[0]);
+      if (!again || !shotUrls.current.length) {
+        shotUrls.current.forEach((url) => URL.revokeObjectURL(url));
+        shotUrls.current = files.map((file) => URL.createObjectURL(file));
       }
       setShot({
-        url: shotUrl.current, busy: true, canRetry: false,
-        title: 'Reading your photo…', help: 'Photo received. This takes 10 to 30 seconds.',
+        url: shotUrls.current[0], urls: [...shotUrls.current], busy: true, canRetry: false,
+        totalPages: files.length, progress: 0, message: 'Preparing your pages',
+        title: `Preparing ${files.length} page${files.length === 1 ? '' : 's'}…`,
+        help: 'Keeping every selected page in the paper.',
       });
+      setTab('read');
+      setPlayerVisible(false);
       try {
-        const res = await answerPhotos(files, live.current.settings.style, ctl.current.signal);
-        if (!res.text) throw new AnswerError('No questions were found in that photo. Try a clearer, closer shot.');
-        setText(res.text);
+        const updateProgress = (progress: AnswerProgress) => {
+          setShot((current) => current && ({
+            ...current,
+            message: progress.message,
+            help: progress.detail,
+            progress: progress.progress,
+            totalPages: progress.totalPages,
+          }));
+        };
+        const result = await answerPhotos(files, live.current.settings.style, ctl.current.signal, updateProgress);
+        if (!result.text) throw new AnswerError('No questions were found in those pages. Try a closer, clearer photograph.');
+        setText(result.text);
         setHistory((h) => {
-          const n = [{ t: Date.now(), text: res.text }, ...h].slice(0, 20);
-          saveHistory(n);
-          return n;
+          const titleLine = result.text.split(/\r?\n/).find((line) => line.trim()) || 'Exam paper';
+          const next = [{ t: Date.now(), title: titleLine.replace(/^\s*\d+[.)]\s*/, '').slice(0, 70) || 'Exam paper', text: result.text }, ...h].slice(0, 20);
+          saveHistory(next);
+          return next;
         });
-        setCount(photosToday(true));
-        setShot((s) => s && { ...s, busy: false, canRetry: false, title: 'Answers ready', help: 'They are in the text box below.', detail: undefined });
-        if (live.current.settings.auto) startReading(0, res.text);
+        setShot((current) => current && ({
+          ...current, busy: false, canRetry: false, progress: 100,
+          title: 'Answers ready',
+          help: `All ${result.questionCount} question${result.questionCount === 1 ? '' : 's'} answered from ${files.length} page${files.length === 1 ? '' : 's'}.`,
+          message: 'Your complete paper is ready.', detail: undefined,
+        }));
+        if (live.current.settings.auto) startReading(0, result.text);
         else {
           unwake();
-          setMediaInfo('Answers ready', 'Press play to start reading', false);
+          setMediaInfo('Answers ready', `${result.questionCount} questions · Press play to read`, false);
         }
       } catch (e) {
         unwake();
@@ -226,15 +263,17 @@ export default function Shell({
           return;
         }
         const aborted = (e as Error).name === 'AbortError';
-        const a = e instanceof AnswerError ? e : null;
-        setShot((s) => s && {
-          ...s, busy: false, canRetry: true,
-          title: aborted ? 'Stopped' : "Couldn't get answers",
-          help: aborted ? '' : (a?.message || 'Check your connection and try again.'),
-          detail: a?.detail || undefined,
-        });
+        const error = e instanceof AnswerError ? e : null;
+        setShot((current) => current && ({
+          ...current, busy: false, canRetry: !aborted,
+          title: aborted ? 'Processing stopped' : 'Could not complete the paper',
+          help: aborted ? 'Your selected pages and current answer text are kept.' : (error?.message || 'Check your connection and try again.'),
+          message: aborted ? 'Stopped by you' : 'The paper was not marked as complete',
+          detail: error?.detail || undefined,
+        }));
       } finally {
         busy.current = false;
+        ctl.current = null;
       }
     },
     [onLocked, startReading],
@@ -295,20 +334,112 @@ export default function Shell({
     }
   }
 
+  const navigate = (next: Tab) => {
+    if (snap.active && !snap.finished && next !== tab) engine.pause();
+    setPlayerVisible(false);
+    setTab(next);
+    setMenuOpen(false);
+  };
+
+  const continueSession = () => {
+    setTab('read');
+    setMenuOpen(false);
+    if (snap.active && !snap.finished) {
+      setPlayerVisible(true);
+      if (snap.state === 'paused') engine.resume();
+      return;
+    }
+    if (resume) {
+      setText(resume.text);
+      primeSpeech();
+      startReading(resume.idx, resume.text);
+    }
+  };
+
+  const backHandler = useRef<() => boolean>(() => false);
+  backHandler.current = () => {
+    if (menuOpen) { setMenuOpen(false); return true; }
+    if (playerVisible) {
+      // The first hardware/browser Back exits the full-screen reader, never the app.
+      // The engine is paused at the current phrase and the session remains resumable.
+      engine.pause();
+      setPlayerVisible(false);
+      setTab('read');
+      return true;
+    }
+    if (tab !== 'read') {
+      if (snap.active && !snap.finished) engine.pause();
+      setPlayerVisible(false);
+      setTab('read');
+      return true;
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    const handleBack = () => backHandler.current();
+    const onNativeBack = (event: Event) => {
+      if (handleBack()) event.preventDefault();
+    };
+    const onPopState = () => {
+      if (handleBack()) window.history.pushState({ __examMate: true }, '', window.location.href);
+    };
+    (window as any).__examMateHandleBack = handleBack;
+    window.history.pushState({ __examMate: true }, '', window.location.href);
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('exammate:back', onNativeBack);
+    return () => {
+      delete (window as any).__examMateHandleBack;
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('exammate:back', onNativeBack);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && menuOpen) setMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [menuOpen]);
+
   return (
     <>
       <div className="app">
+        <div className="app-topbar">
+          <div className="brand-mark"><span className="brand-dot" /> ExamMate</div>
+          <button className="menu-toggle" type="button" aria-label={menuOpen ? 'Close navigation menu' : 'Open navigation menu'} aria-expanded={menuOpen} aria-controls="main-navigation" onClick={() => setMenuOpen((open) => !open)}>
+            <Icon name="menu" size={22} />
+          </button>
+        </div>
+        {menuOpen && <>
+          <button className="menu-scrim" aria-label="Close navigation menu" onClick={() => setMenuOpen(false)} />
+          <nav className="main-menu" id="main-navigation" aria-label="Main navigation">
+            <div className="menu-heading">Workspace</div>
+            {MENU.map((item) => <button type="button" key={item.id} className={'menu-item' + (tab === item.id ? ' selected' : '')} onClick={() => navigate(item.id)}>
+              <span className="menu-icon"><Icon name={item.icon} size={19} /></span>
+              <span><b>{item.label}</b><small>{item.description}</small></span>
+            </button>)}
+          </nav>
+        </>}
+        {snap.active && !snap.finished && !playerVisible && (
+          <button className="session-banner" type="button" onClick={continueSession}>
+            <span className="session-play"><Icon name="play" size={16} /></span>
+            <span className="session-copy"><b>Reading session paused</b><small>Continue from phrase {snap.idx + 1} of {snap.phrases.length}</small></span>
+            <span className="session-action">Continue</span>
+          </button>
+        )}
         {tab === 'read' && (
           <ReadTab
             settings={settings} setStyle={(style) => update({ style })}
-            text={text} setText={setText} msg={msg} shot={shot} count={count} resume={resume}
+            text={text} setText={setText} msg={msg} shot={shot} resume={resume}
             camRef={camRef} galRef={galRef}
             onCamera={() => { if (needsKeyFirst()) return; primeSpeech(); camRef.current?.click(); }}
             onGallery={() => { if (needsKeyFirst()) return; primeSpeech(); galRef.current?.click(); }}
             onPhotos={(f) => void handlePhotos(f)}
             onFile={(f) => void loadFile(f)}
             onStart={() => { primeSpeech(); startReading(); }}
-            onResume={() => { if (resume) { setText(resume.text); primeSpeech(); startReading(resume.idx, resume.text); } }}
+            onResume={continueSession}
             onPaste={() => void pasteAndStart()}
             onRetry={() => void handlePhotos(lastFiles.current, true)}
             onCancel={() => ctl.current?.abort()}
@@ -317,7 +448,8 @@ export default function Shell({
         {tab === 'history' && (
           <HistoryTab
             items={history}
-            onOpen={(t) => { setText(t); setMsg('Loaded from history. Press Start.'); setTab('read'); }}
+            onOpen={(item) => { setText(item.text); setMsg('Loaded from history. Press Start.'); setTab('read'); setPlayerVisible(false); setMenuOpen(false); }}
+            onRename={(t, title) => setHistory((current) => { const next = current.map((item) => item.t === t ? { ...item, title } : item); saveHistory(next); return next; })}
             onClear={() => { setHistory([]); saveHistory([]); }}
           />
         )}
@@ -338,18 +470,13 @@ export default function Shell({
         )}
       </div>
 
-      <nav className="tabbar" aria-label="Main">
-        {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'on' : ''} aria-current={tab === t.id ? 'page' : undefined} onClick={() => setTab(t.id)}>
-            <Icon name={t.icon} size={22} />
-            <span>{t.label}</span>
-          </button>
-        ))}
-      </nav>
-
-      {snap.active && (
+      {tab === 'read' && playerVisible && snap.active && (
         <Player
-          engine={engine} snap={snap} onOpenTtsInstall={isAndroidNative() ? () => {
+          engine={engine} snap={snap}
+          pace={currentPace}
+          onPaceChange={(pace) => update(PACE_PRESETS[pace])}
+          onMinimize={() => { engine.pause(); setPlayerVisible(false); setTab('read'); }}
+          onOpenTtsInstall={isAndroidNative() ? () => {
             void openNativeSpeechInstall().then((opened) => {
               if (!opened) setMsg('Open Android Settings > Text-to-speech output and install a voice for your language.');
             }).catch(() => setMsg('Could not open Android speech voice settings. Open Settings > Text-to-speech output manually.'));

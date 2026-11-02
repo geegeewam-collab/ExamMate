@@ -46,6 +46,11 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', on);
   }, [gate]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.appearance;
+    document.documentElement.style.colorScheme = settings.appearance === 'system' ? '' : settings.appearance;
+  }, [settings.appearance]);
+
   const update = useCallback((p: Partial<Settings>) => {
     setSettings((s) => {
       const n = { ...s, ...p };

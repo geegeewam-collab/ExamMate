@@ -1,5 +1,6 @@
-import { activate, activateOwner, verify, type Store } from './license';
-import { blocked, clientIp, json, recordFail, samePassword, secret } from './http';
+import { activate, signToken, validDevice, verify, type Store } from './license';
+import { blocked, clientIp, json, recordFail, secret } from './http';
+import { authenticateParentPassword, getAdminState } from './admin-auth';
 
 export async function handleValidate(req: Request, store: Store): Promise<Response> {
   if (!secret()) return json({ error: 'The server is missing its settings.' }, 500);
@@ -27,8 +28,14 @@ export async function handleOwner(req: Request, store: Store): Promise<Response>
   const ip = clientIp(req);
   if (await blocked(store, 'badowner', ip, 8)) return json({ error: 'Too many wrong passwords. Wait a few minutes.' }, 429);
   const body = await req.json().catch(() => ({}));
-  const r = activateOwner(secret(), process.env.ADMIN_PASSWORD || '', body.password, body.deviceId, samePassword);
-  if (r.ok) return json({ token: r.token, owner: true });
-  if (r.status === 401) await recordFail(store, 'badowner', ip);
-  return json({ error: r.error }, r.status);
+  if (!validDevice(body?.deviceId)) return json({ error: 'Missing device.' }, 400);
+  const configured = await getAdminState(store);
+  if (!configured) return json({ error: 'The server has no configured parent admin password.' }, 500);
+  const state = await authenticateParentPassword(store, body?.password);
+  if (!state) {
+    await recordFail(store, 'badowner', ip);
+    return json({ error: 'Wrong password.' }, 401);
+  }
+  const token = signToken('OWNER', body.deviceId, secret(), { v: state.ownerTokenVersion });
+  return json({ token, owner: true });
 }

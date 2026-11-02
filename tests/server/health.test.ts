@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { health } from '../../server/health';
 import { safe } from '../../server/http';
-import { adminGet } from '../../server/admin-api';
+import { handleAdminLogin } from '../../server/admin-auth';
 import { handleValidate } from '../../server/license-api';
 import { memoryStore, post } from './memory-store';
 import type { Store } from '../../server/license';
@@ -13,7 +13,7 @@ const goodEnv = {
 };
 const brokenStore = (): Store => {
   const boom = async () => { throw new Error('fetch failed'); };
-  return { get: boom, put: boom, del: boom, list: boom, hit: boom } as unknown as Store;
+  return { get: boom, put: boom, del: boom, list: boom, hit: boom, getAdminAuthState: boom, putAdminAuthState: boom } as unknown as Store;
 };
 const adminReq = () => new Request('http://x/api/admin/licenses', { headers: { authorization: 'Bearer super secret admin password', 'x-forwarded-for': '1.1.1.1' } });
 
@@ -62,8 +62,7 @@ test('health: warns when this is a preview deployment', async () => {
 
 test('REGRESSION: a dead database used to give a bare 500; now it is readable JSON the page can show', async () => {
   process.env.ADMIN_PASSWORD = 'super secret admin pw';
-  await assert.rejects(() => adminGet(adminReq(), brokenStore()), /fetch failed/); // what used to become "Request failed"
-  const res = await safe((req) => adminGet(req, brokenStore()))(adminReq());
+  const res = await safe((req) => handleAdminLogin(req, brokenStore()))(adminReq());
   assert.equal(res.status, 503);
   const d = await res.json();
   assert.equal(d.code, 'server');

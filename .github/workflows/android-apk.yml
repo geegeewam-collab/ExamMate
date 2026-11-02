@@ -44,7 +44,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Type check and test
         run: |

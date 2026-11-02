@@ -2,11 +2,13 @@ const API = 'https://generativelanguage.googleapis.com/v1beta';
 
 // Ask Google which Flash models this key can use, newest first, instead of guessing names.
 let cache: { at: number; names: string[] } | null = null;
-export async function models(key: string): Promise<string[]> {
+export async function models(key: string, signal?: AbortSignal): Promise<string[]> {
   if (!cache || Date.now() - cache.at > 3_600_000) {
     let names: string[] = [];
     try {
-      const r = await fetch(`${API}/models?pageSize=200`, { headers: { 'x-goog-api-key': key }, signal: AbortSignal.timeout(6000) });
+      const timeout = AbortSignal.timeout(6000);
+      const combined = signal && typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, timeout]) : timeout;
+      const r = await fetch(`${API}/models?pageSize=200`, { headers: { 'x-goog-api-key': key }, signal: combined });
       if (r.ok) {
         const d = await r.json();
         names = (d.models ?? [])
@@ -62,26 +64,80 @@ export function parseQuestions(raw: string): ExamQuestion[] | null {
 }
 
 export const answerPrompt = (mode: string, questions: ExamQuestion[]) => `The attached images are photos of an exam page. Use them only to see a diagram, table or detail that the wording below leaves out. Answer ONLY the numbered questions listed below, one answer each.
-Your answers will be read aloud by a text-to-speech voice and written down by hand, so:
-- Plain text only: no markdown, asterisks, hashes, tables or LaTeX. Never use line breaks inside an answer.
-- n: the number of the question, exactly as numbered in the list below.
-- answer: ${mode === 'learn' ? 'the answer, then the method in a few short steps, then one short worked example. Keep it clear and easy to follow when spoken.' : 'just the answer, as briefly as the question allows. For calculations give the final result only.'}
-- When a question asks for a number of points (for example THREE advantages), give exactly that many.
-- Write maths and symbols as words, for example "x squared plus 3" or "five over eight".
-- For multiple choice, say the letter and then the option text.
-- If a question is unreadable or something is missing, say so in one short sentence as its answer.
-- Do not add extra questions, an introduction or commentary.
+Your answers will be read aloud by a text-to-speech voice one line at a time, and written down by hand, so the SHAPE of each answer matters as much as its content.
+
+Output for each question: n (its number in the list below) and lines (an array of strings). Every string in lines is ONE line that the student hears and writes on its own. Never put several points in one string.
+- Do NOT repeat or rephrase the question, and do not add the question number or label. Start straight with the answer.
+- Use plain text for ordinary answers. Keep mathematical symbols in their correct written form; never replace a symbol with its spoken words. For example, write "x² + 3", "5/8", "x ≥ 10" and "a × b" using the appropriate symbols.
+- For a question asking for a program or source code, return a complete, runnable solution in a fenced code block labelled with its language (for example, language label C). Put each source-code line in its own lines-array element. Preserve indentation, braces, operators, quotes, semicolons, comments, and blank lines exactly. Do not turn code into prose or put several source lines into one array element. Add only a short explanation outside the code block when the question asks for an explanation.
+- For multiple choice, give the option letter and then the option text.
+- If a question is unreadable or something is missing, give one line saying so. No introduction or commentary.
+
+Choose the shape from the wording of the question:
+1. A number of points is asked (state, name, list, identify, outline, give THREE or FOUR ...): exactly that many lines, numbered "1. ...", "2. ...", "3. ...". Each line is a short point, one idea per line.
+2. A number of points to explain, discuss, describe or evaluate (explain THREE advantages, discuss THREE characteristics, ...): for each point use one line with its number and name ("1. Clarity"), then one line starting with "- " that explains it. Exactly the number asked.
+3. A procedure, steps, "how can one", "outline how", "analyze how one can apply": first an optional line saying what is being done, then one line per step, "Step 1. ...", "Step 2. ...", in order. Include every step needed, and nothing else.
+4. Distinguish, differentiate or compare two things: one line for each, like "Formula: ..." and "Function: ...", then if useful one line starting "Difference: ".
+5. Define, explain the term, describe the purpose, or identify one thing: one single line, a complete sentence or the exact term.
+6. Several kinds are asked in one question (for example three types, each with an example): number each type on its own line, then a line starting "- " with its short explanation, then a line starting "- Example: ".
+7. A calculation: the working as one short line per step, then a last line "Answer: ...".
+When a question gives a number of marks, match the amount of detail to it. The number of points asked ALWAYS wins: THREE means exactly three numbered points.
+
+${mode === 'learn' ? 'This is learn mode. After the answer lines, add a line "Method:" followed by a few short "Step 1. ..." lines, then one line starting "Example: " with one short worked example. Keep every line easy to follow when spoken.' : 'This is quick mode: keep every line as brief as the question allows. For calculations give the working lines and the final result only.'}
 
 Questions:
 ${questions.map((q, i) => `${i + 1}. [${q.label}] ${q.text}`).join('\n')}`;
 
 export const answerSchema = {
   type: 'OBJECT',
-  properties: { answers: { type: 'ARRAY', items: { type: 'OBJECT', properties: { n: { type: 'INTEGER' }, answer: { type: 'STRING' } }, required: ['n', 'answer'] } } },
+  properties: { answers: { type: 'ARRAY', items: { type: 'OBJECT', properties: { n: { type: 'INTEGER' }, lines: { type: 'ARRAY', items: { type: 'STRING' } } }, required: ['n', 'lines'] } } },
   required: ['answers'],
 };
 
-/** Answers by question number (1-based, as numbered in the prompt), so a reordered or skipped answer can never land on the wrong question. */
+/**
+ * Cleans one answer into separate lines. Each point stays on its own line so the reader can speak and show it on its own.
+ * Safety net: if the model still wrote "1. a 2. b 3. c" or "Step 1. a Step 2. b" in a single line, it is split into its points.
+ */
+export function toLines(input: unknown): string[] {
+  const raw = Array.isArray(input) ? input.map((x) => String(x ?? '')).join('\n') : String(input ?? '');
+  const source = raw.replace(/\r\n?/g, '\n').split('\n');
+  const lines: string[] = [];
+  let inCode = false;
+  for (const original of source) {
+    const trimmed = original.trim();
+    if (/^```[a-zA-Z0-9_+.-]*\s*$/.test(trimmed)) {
+      lines.push(trimmed);
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) {
+      // Source code is data: indentation and every operator must survive unchanged.
+      lines.push(original.replace(/\t/g, '    '));
+      continue;
+    }
+    const prose = trimmed
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/__((?:[^_]|_(?!_))+?)__/g, '$1')
+      .replace(/(?<!\*)\*([^\s*](?:[^*]*?[^\s*])?)\*(?!\*)/g, '$1')
+      .replace(/(?<!_)_([^\s_](?:[^_]*?[^\s_])?)_(?!_)/g, '$1')
+      .replace(/\s+/g, ' ');
+    if (prose) lines.push(prose);
+  }
+
+  // Safety net for a model that ignored the line-array instruction. Only split a clean,
+  // sequential numbered list; never split prose such as "version 2. of the manual" or code.
+  if (lines.length === 1 && !lines[0].includes('```') && !/[{};#]/.test(lines[0])) {
+    const value = lines[0];
+    const matches = [...value.matchAll(/(?:^|\s)(?:step\s+)?(\d{1,2})[.)]\s+/gi)];
+    if (matches.length >= 2 && Number(matches[0][1]) === 1 && matches.every((m, i) => Number(m[1]) === i + 1)) {
+      const starts = matches.map((m) => (m.index ?? 0) + (m[0].startsWith(' ') ? 1 : 0));
+      lines.splice(0, 1, ...starts.map((at, i) => value.slice(at, starts[i + 1] ?? value.length).trim()).filter(Boolean));
+    }
+  }
+  return lines;
+}
+
+/** Answers by question number (1-based, as numbered in the prompt), so a reordered or skipped answer can never land on the wrong question. Lines are joined with "\n". */
 export function parseAnswers(raw: string): Map<number, string> | null {
   try {
     const a = JSON.parse(raw).answers;
@@ -89,7 +145,7 @@ export function parseAnswers(raw: string): Map<number, string> | null {
     const out = new Map<number, string>();
     for (const x of a) {
       const n = Number(x?.n);
-      const text = String(x?.answer ?? '').replace(/\s+/g, ' ').trim();
+      const text = toLines(x?.lines ?? x?.answer).join('\n');
       if (Number.isInteger(n) && text && !out.has(n)) out.set(n, text);
     }
     return out.size ? out : null;
@@ -117,6 +173,8 @@ export interface GenerateOptions {
   noThinking?: boolean;
   /** Skip the extra model-list HTTP request; useful for latency-sensitive endpoints with explicit fallbacks. */
   discoverModels?: boolean;
+  /** Abort upstream provider requests when the incoming client request is cancelled. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -142,7 +200,10 @@ export async function generate<T>(
   const call = async (model: string, payload: unknown): Promise<{ r: Response } | { err: GeminiFail }> => {
     const left = deadline - (Date.now() - started);
     if (left < 1500) return { err: { status: 504, msg: 'time budget used up' } };
+    if (opts.signal?.aborted) return { err: { status: 499, msg: `${model}: client cancelled the request` } };
     const ctl = new AbortController();
+    const abortParent = () => ctl.abort();
+    opts.signal?.addEventListener('abort', abortParent, { once: true });
     const t = setTimeout(() => ctl.abort(), Math.min(perCall, left));
     try {
       const r = await fetch(`${API}/models/${model}:generateContent`, {
@@ -154,9 +215,10 @@ export async function generate<T>(
       return { r };
     } catch (e) {
       const aborted = (e as Error)?.name === 'AbortError';
-      return { err: { status: aborted ? 504 : 502, msg: `${model}: ${aborted ? 'took too long' : 'could not reach Google'}` } };
+      return { err: { status: aborted ? (opts.signal?.aborted ? 499 : 504) : 502, msg: `${model}: ${opts.signal?.aborted ? 'client cancelled the request' : aborted ? 'took too long' : 'could not reach Google'}` } };
     } finally {
       clearTimeout(t);
+      opts.signal?.removeEventListener('abort', abortParent);
     }
   };
 
@@ -177,7 +239,7 @@ export async function generate<T>(
   const tried = new Set<string>();
   const batches: (() => Promise<string[]>)[] = [];
   if (opts.models?.length) batches.push(async () => opts.models!);
-  if (opts.discoverModels !== false) batches.push(() => models(apiKey)); // only looked up when the caller allows discovery
+  if (opts.discoverModels !== false) batches.push(() => models(apiKey, opts.signal)); // only looked up when the caller allows discovery
 
   outer: for (const getBatch of batches) {
     for (const model of await getBatch()) {

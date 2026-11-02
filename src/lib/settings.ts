@@ -23,18 +23,25 @@ export interface Settings {
   holdMs: 0 | 1000 | 3000;
   /** Route a headset play/pause media press to voice Ask while reading. Kept under the legacy storage key for migration compatibility. */
   earbudAsk: boolean;
+  appearance: 'system' | 'dark' | 'light';
 }
 
 export const DEFAULTS: Settings = {
   rate: 0.5, gapS: 2, pw: 0.75, mode: 'clause', twice: false, punct: false,
   advance: 'timer', lead: 0, voice: '', style: 'quick', auto: true,
-  assist: false, wakeListen: true, wake: 'exam', wakeCustom: '', holdMs: 3000, earbudAsk: false,
+  assist: false, wakeListen: true, wake: 'exam', wakeCustom: '', holdMs: 3000, earbudAsk: false, appearance: 'system',
 };
 
-export const PRESETS: Record<'notes' | 'careful' | 'normal', Partial<Settings>> = {
-  notes: { rate: 0.5, gapS: 2, pw: 0.75, mode: 'w3', twice: false },
-  careful: { rate: 0.4, gapS: 3, pw: 1.25, mode: 'w2', twice: true },
-  normal: { rate: 0.9, gapS: 0.5, pw: 0, mode: 'sentence', twice: false },
+export const PACE_PRESETS: Record<'write' | 'balanced' | 'quick', Partial<Settings>> = {
+  write: { rate: 0.52, gapS: 2.25, pw: 0.85, mode: 'clause', twice: false, advance: 'timer' },
+  balanced: { rate: 0.78, gapS: 1.1, pw: 0.3, mode: 'sentence', twice: false, advance: 'timer' },
+  quick: { rate: 1.05, gapS: 0.25, pw: 0, mode: 'sentence', twice: false, advance: 'timer' },
+};
+
+export const PRESETS = {
+  notes: PACE_PRESETS.write,
+  careful: { rate: 0.4, gapS: 3, pw: 1.25, mode: 'w2' as const, twice: true },
+  normal: PACE_PRESETS.balanced,
 };
 
 const clamp = (n: unknown, lo: number, hi: number, d: number) =>
@@ -61,13 +68,14 @@ export function loadSettings(): Settings {
     wakeCustom: typeof s.wakeCustom === 'string' ? s.wakeCustom.slice(0, 40) : '',
     holdMs: oneOf(s.holdMs, [0, 1000, 3000] as const, 3000),
     earbudAsk: s.earbudAsk === true,
+    appearance: oneOf(s.appearance, ['system', 'dark', 'light'] as const, DEFAULTS.appearance),
   };
 }
 
 export const saveSettings = (s: Settings) => kv.set('settings', s);
 
 /* History and resume */
-export interface HistoryItem { t: number; text: string }
+export interface HistoryItem { t: number; text: string; title?: string }
 export const loadHistory = (): HistoryItem[] => {
   const h = kv.get<HistoryItem[]>('history', []);
   return Array.isArray(h) ? h.filter((x) => x && typeof x.text === 'string').slice(0, 20) : [];
@@ -77,17 +85,5 @@ export const saveHistory = (h: HistoryItem[]) => kv.set('history', h.slice(0, 20
 export interface Resume { text: string; idx: number }
 export const loadResume = (): Resume | null => {
   const r = kv.get<Resume | null>('resume', null);
-  return r && typeof r.text === 'string' && r.text && r.idx > 0 ? r : null;
+  return r && typeof r.text === 'string' && r.text.trim().length > 0 && Number.isInteger(r.idx) && r.idx >= 0 ? r : null;
 };
-
-/* Photos answered today (on this device) */
-export function photosToday(add = false): number {
-  const d = new Date().toDateString();
-  let c = kv.get<{ d: string; n: number }>('count', { d, n: 0 });
-  if (c.d !== d) c = { d, n: 0 };
-  if (add) {
-    c.n++;
-    kv.set('count', c);
-  }
-  return c.n;
-}

@@ -1,5 +1,5 @@
 import { Redis } from '@upstash/redis';
-import { parseDeviceClaimResult, type DeviceClaim, type License, type Store } from './license';
+import { parseDeviceClaimResult, type AdminAuthState, type DeviceClaim, type License, type Store } from './license';
 
 let r: Redis | null = null;
 
@@ -56,6 +56,12 @@ export const store: Store = {
       [deviceId, new Date().toISOString()],
     );
     return parseDeviceClaimResult(result);
+  },
+  async getAdminAuthState() {
+    return (await db().get<AdminAuthState>('admin:auth')) ?? null;
+  },
+  async putAdminAuthState(state) {
+    await db().set('admin:auth', state);
   },
   async hit(key, ttlSec, delta = 1) {
     const k = 'hit:' + key;

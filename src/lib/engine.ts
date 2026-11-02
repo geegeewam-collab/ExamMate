@@ -1,4 +1,4 @@
-import { splitText, speakPunctuation, wordCount, type PhraseMode } from './text';
+import { splitText, speakCodeLine, speakPunctuation, speakSymbols, wordCount, type PhraseMode } from './text';
 
 export interface SpeakHandlers {
   onstart(): void;
@@ -50,6 +50,9 @@ export interface Snapshot {
   phrases: readonly string[];
   lines: readonly string[];
   lineOf: readonly number[];
+  codeOf: readonly boolean[];
+  codeLineNumber: readonly number[];
+  offsetOf: readonly number[];
   idx: number;
   /** Seconds left in the optional start countdown. */
   countdown: number;
@@ -71,6 +74,9 @@ const EMPTY: Snapshot = {
   phrases: [],
   lines: [],
   lineOf: [],
+  codeOf: [],
+  codeLineNumber: [],
+  offsetOf: [],
   idx: 0,
   countdown: 0,
   gapMs: 0,
@@ -92,6 +98,7 @@ export class ReaderEngine {
   private hintTimer: unknown = null;
   private waiting: (() => void) | null = null;
   private spoke = false;
+  private sourceText = '';
 
   constructor(
     private speech: Speech,
@@ -108,7 +115,29 @@ export class ReaderEngine {
   getSnapshot = () => this.snap;
 
   setOptions(p: Partial<EngineOptions>) {
+    const previousMode = this.opts.mode;
     this.opts = { ...this.opts, ...p };
+    if (!p.mode || p.mode === previousMode || !this.snap.active || this.snap.finished || !this.sourceText) return;
+
+    // Re-segment the open paper when the student changes pace, keeping the current
+    // source position rather than silently applying the new phrase size only next time.
+    const currentOffset = this.snap.offsetOf[this.snap.idx] ?? 0;
+    const wasPlaying = this.snap.state === 'playing';
+    const split = splitText(this.sourceText, this.opts.mode);
+    if (!split.phrases.length) return;
+    let nextIndex = 0;
+    for (let i = 0; i < split.offsetOf.length; i++) {
+      if (split.offsetOf[i] > currentOffset) break;
+      nextIndex = i;
+    }
+
+    this.halt();
+    this.set({
+      phrases: split.phrases, lineOf: split.lineOf, lines: split.lines,
+      codeOf: split.codeOf, codeLineNumber: split.codeLineNumber, offsetOf: split.offsetOf,
+      idx: nextIndex, state: 'paused', phase: 'listen', countdown: 0, gapMs: 0, gapEndsAt: 0,
+    });
+    if (wasPlaying) this.run(nextIndex);
   }
 
   private set(p: Partial<Snapshot>) {
@@ -130,12 +159,13 @@ export class ReaderEngine {
   start(text: string, from = 0): boolean {
     const t = text.trim();
     if (!t) return false;
-    const { phrases, lineOf, lines } = splitText(t, this.opts.mode);
+    this.sourceText = t;
+    const { phrases, lineOf, lines, codeOf, codeLineNumber, offsetOf } = splitText(t, this.opts.mode);
     if (!phrases.length) return false;
     this.halt();
     const first = Math.min(Math.max(0, from), phrases.length - 1);
     this.spoke = false;
-    this.snap = { ...EMPTY, active: true, phrases, lineOf, lines, idx: first };
+    this.snap = { ...EMPTY, active: true, phrases, lineOf, lines, codeOf, codeLineNumber, offsetOf, idx: first };
 
     const lead = this.opts.lead;
     if (lead > 0) {
@@ -172,7 +202,9 @@ export class ReaderEngine {
     this.set({ idx: i, state: 'playing', phase: 'listen', countdown: 0, gapMs: 0, gapEndsAt: 0 });
 
     const phrase = this.snap.phrases[i];
-    const text = this.opts.punct ? speakPunctuation(phrase) : phrase;
+    const isCode = this.snap.codeOf[i] === true;
+    const spoken = isCode ? speakCodeLine(phrase, this.snap.codeLineNumber[i] || 1) : speakSymbols(phrase);
+    const text = this.opts.punct && !isCode ? speakPunctuation(spoken) : spoken;
 
     if (!this.spoke && this.hintTimer == null) {
       this.hintTimer = this.clock.setTimeout(() => {
@@ -224,9 +256,9 @@ export class ReaderEngine {
   }
 
   pause() {
-    if (this.snap.state !== 'playing') return;
+    if (!this.snap.active || this.snap.finished || this.snap.state === 'idle' || this.snap.state === 'paused') return;
     this.halt();
-    this.set({ state: 'paused', gapMs: 0, gapEndsAt: 0 });
+    this.set({ state: 'paused', phase: 'listen', countdown: 0, gapMs: 0, gapEndsAt: 0 });
   }
   resume() {
     if (this.snap.state === 'paused') this.run(this.snap.idx);
@@ -273,6 +305,7 @@ export class ReaderEngine {
   stop() {
     this.halt();
     this.snap = EMPTY;
+    this.sourceText = '';
     this.listeners.forEach((l) => l());
   }
   /** For component unmount: silence everything but keep subscribers (React StrictMode remounts). */

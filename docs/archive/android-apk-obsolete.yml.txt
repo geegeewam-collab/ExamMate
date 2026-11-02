@@ -1,3 +1,6 @@
+# Archived, inactive workflow. GitHub Actions does not execute workflows outside .github/workflows.
+# The active build is .github/workflows/android-apk.yml. Do not restore this file as a workflow.
+
 
 # Exam Mate - Android Release Workflow
 name: Build Android APK

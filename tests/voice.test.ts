@@ -416,9 +416,10 @@ test('native recognizer: partial results, stop event, final result, permissions'
   assert.deepEqual(got, [['final words', false]], 'partialResults sessions can resolve start() immediately, so its payload is not treated as final');
   await r.stop();
 
-  startError = new Error('Missing permission'); got.length = 0;
-  await r.start({ onText: () => {}, onEnd: (why) => got.push(why) });
-  assert.deepEqual(got, ['denied']);
+  startError = new Error('Missing permission');
+  const errors: string[] = [];
+  await r.start({ onText: () => {}, onEnd: (why) => { errors.push(why); } });
+  assert.deepEqual(errors, ['denied']);
 
   plugin.requestPermissions = async () => ({ speechRecognition: 'denied' });
   assert.equal(await r.requestPermission(), false);

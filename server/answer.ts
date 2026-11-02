@@ -7,17 +7,55 @@ const fail = (code: string, error: string, status: number, detail = '') =>
 
 const KEY_SHAPE = /^[A-Za-z0-9_\-]{20,200}$/;
 
+async function readJsonLimited(req: Request): Promise<{ ok: true; value: any } | { ok: false; tooLarge?: boolean; aborted?: boolean }> {
+  const reader = req.body?.getReader();
+  if (!reader) return { ok: false };
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_REQUEST_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return { ok: false, tooLarge: true };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return req.signal.aborted ? { ok: false, aborted: true } : { ok: false };
+  }
+  const joined = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; }
+  try { return { ok: true, value: JSON.parse(new TextDecoder().decode(joined)) }; }
+  catch { return { ok: false }; }
+}
+
+async function mapConcurrent<T, R>(items: T[], limit: number, work: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 // The route may run for 60 s on Vercel. A typical paper takes 10 to 25 s; these limits only matter when Google is slow, and
 // they keep the worst case (read, then answer) inside the 60 s with room for the license check and the reply.
 export const TOTAL_MS = 52_000;
 export const READ_CALL_MS = 18_000;
 export const READ_TOTAL_MS = 24_000;
 export const ANSWER_CALL_MS = 24_000;
-/** A paper can have at most this many questions; more than this is not an exam page. */
-export const MAX_QUESTIONS = 30;
+/** Maximum serialized payload for one request; client-side batching means this is not a paper/page-count limit. */
+export const MAX_REQUEST_BYTES = 4_000_000;
 /** Questions answered per Google call. Learn mode writes much more per question, so its groups are smaller. */
 export const groupSize = (style: 'quick' | 'learn') => (style === 'learn' ? 5 : 8);
-export const NO_ANSWER = 'No answer came back for this question. Try the photo again.';
 
 /**
  * POST /api/answer: photos in, spoken-style answers out. Only for devices with a valid license.
@@ -26,6 +64,7 @@ export const NO_ANSWER = 'No answer came back for this question. Try the photo a
  */
 export async function handleAnswer(req: Request, store: Store): Promise<Response> {
   if (!secret()) return fail('config', 'The server is missing its settings.', 500);
+  if (req.signal.aborted) return fail('aborted', 'Processing was stopped.', 499);
 
   const auth = await verify(store, secret(), req.headers.get('x-license-token'), req.headers.get('x-device-id'));
   if (!auth.ok) return fail('license', auth.error, auth.status === 401 ? 401 : 403);
@@ -39,24 +78,32 @@ export async function handleAnswer(req: Request, store: Store): Promise<Response
     if (!KEY_SHAPE.test(apiKey)) return fail('need_key', 'Add your free Gemini key in Settings to read photos.', 400);
   }
 
-  if (Number(req.headers.get('content-length') || 0) > 4_000_000) return fail('size', 'Photo too large. Try fewer or smaller photos.', 413);
+  const declaredLength = Number(req.headers.get('content-length') || 0);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BYTES) return fail('size', 'This page batch is too large. The app should split it automatically; try uploading the pages again.', 413);
 
-  // Short burst limit per license (protects the server; students' own Gemini quota is their own business).
-  const burstMax = auth.owner ? 60 : 12;
+  // Abuse throttle, not a paper-size limit. Client page batches from one long paper must not hit the old 12-request cap.
+  const burstMax = auth.owner ? 120 : 240;
   if ((await store.hit(`burst:${auth.key}`, 600, 1)) > burstMax) return fail('limit', 'Too many requests. Wait a few minutes.', 429);
 
-  let body: any;
-  try { body = await req.json(); } catch { return fail('bad', 'Bad request.', 400); }
-
-  const images: string[] = Array.isArray(body.images) ? body.images.slice(0, 3) : [];
+  const parsed = await readJsonLimited(req);
+  if (!parsed.ok) return parsed.aborted || req.signal.aborted
+    ? fail('aborted', 'Processing was stopped.', 499)
+    : parsed.tooLarge
+      ? fail('size', 'This page batch is too large. The app should split it automatically; try uploading the pages again.', 413)
+      : fail('bad', 'Bad request.', 400);
+  const body = parsed.value;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('bad', 'Bad request.', 400);
+  const images: string[] = Array.isArray(body.images) ? body.images : [];
   if (!images.length) return fail('bad', 'No photo received.', 400);
+  // This is a per-request memory/payload bound only. The client sends as many batches as needed for a full paper.
+  if (images.length > 3) return fail('bad', 'This page batch contains too many images. Please retry so the app can split it safely.', 400);
 
   const style: 'quick' | 'learn' = body.style === 'learn' ? 'learn' : 'quick';
   const started = Date.now();
 
   const photos: any[] = [];
   for (const img of images) {
-    const m = typeof img === 'string' && img.length < 2_500_000 && img.match(/^data:(image\/(?:jpeg|png|webp));base64,/);
+    const m = typeof img === 'string' && img.length <= 3_200_000 && img.match(/^data:(image\/(?:jpeg|png|webp));base64,/);
     if (!m) return fail('bad', "That image can't be used. Try another photo.", 400);
     photos.push({ inline_data: { mime_type: m[1], data: img.slice(m[0].length) } });
   }
@@ -66,51 +113,68 @@ export async function handleAnswer(req: Request, store: Store): Promise<Response
     apiKey,
     { contents: [{ parts: [{ text: readPrompt }, ...photos] }], generationConfig: { temperature: 0, maxOutputTokens: 6000, responseMimeType: 'application/json', responseSchema: readSchema } },
     (d) => parseQuestions(replyText(d)),
-    { timeoutMs: READ_CALL_MS, deadlineMs: READ_TOTAL_MS, noThinking: true },
+    { timeoutMs: READ_CALL_MS, deadlineMs: READ_TOTAL_MS, noThinking: true, signal: req.signal },
   );
+  if (req.signal.aborted) return fail('aborted', 'Processing was stopped.', 499);
   if (!read.ok) {
     const f = describeFailure(read.last, auth.owner);
     return fail(f.code, f.error, f.status, `reading the photo: ${read.last.msg}`);
   }
-  const questions = read.value.slice(0, MAX_QUESTIONS);
-  if (!questions.length) return fail('empty', 'No questions were found in that photo. Try a clearer, closer shot.', 422);
+  const questions = read.value;
+  // A batch may contain only a cover page or exam instructions. Treat it as a completed
+  // page batch so the client can continue with later pages; the client reports an empty
+  // overall paper only after every uploaded batch has been processed.
+  if (!questions.length) return json({ items: [], text: '', model: read.model, partial: 0, questionCount: 0 });
 
   // Step 2: answer the questions in small groups, all at once. The model that just worked goes first.
   const size = groupSize(style);
   const groups: (typeof questions)[] = [];
   for (let i = 0; i < questions.length; i += size) groups.push(questions.slice(i, i + size));
-  const left = Math.max(10_000, TOTAL_MS - (Date.now() - started));
 
-  const done = await Promise.all(
-    groups.map((group) =>
-      generate(
-        apiKey,
-        { contents: [{ parts: [{ text: answerPrompt(style, group) }, ...photos] }], generationConfig: { temperature: 0.2, maxOutputTokens: 4000, responseMimeType: 'application/json', responseSchema: answerSchema } },
-        (d) => parseAnswers(replyText(d)),
-        { models: [read.model], timeoutMs: ANSWER_CALL_MS, deadlineMs: left, noThinking: true },
-      ),
-    ),
-  );
+  // Keep provider concurrency bounded: it protects low-tier keys from burst throttling while
+  // still answering independent groups concurrently. There is no question-count cutoff.
+  const answerOneGroup = (group: typeof questions) => {
+    const remaining = Math.max(1_500, TOTAL_MS - (Date.now() - started));
+    if (req.signal.aborted) return Promise.resolve({ ok: false as const, last: { status: 499, msg: 'client cancelled the request' }, trace: [] });
+    return generate(
+      apiKey,
+      { contents: [{ parts: [{ text: answerPrompt(style, group) }, ...photos] }], generationConfig: { temperature: 0.2, maxOutputTokens: 4000, responseMimeType: 'application/json', responseSchema: answerSchema } },
+      (d) => parseAnswers(replyText(d)),
+      { models: [read.model], timeoutMs: ANSWER_CALL_MS, deadlineMs: remaining, noThinking: true, signal: req.signal },
+    );
+  };
 
+  const firstPass = await mapConcurrent(groups, 3, answerOneGroup);
+  // A group is complete only when every numbered answer came back. Retry just incomplete groups once.
+  const incomplete = firstPass.flatMap((result, index) => {
+    const complete = result.ok && groups[index].every((_, questionIndex) => Boolean(result.value.get(questionIndex + 1)));
+    return complete ? [] : [index];
+  });
+  const retryResults = await mapConcurrent(incomplete, 2, (index) => answerOneGroup(groups[index]));
+  const finalResults = firstPass.slice();
+  incomplete.forEach((groupIndex, retryIndex) => { finalResults[groupIndex] = retryResults[retryIndex]; });
+
+  if (req.signal.aborted) return fail('aborted', 'Processing was stopped.', 499);
   const items: { label: string; answer: string }[] = [];
-  let missing = 0;
-  let lastFail: GeminiFail | undefined;
   for (let g = 0; g < groups.length; g++) {
-    const r = done[g];
-    if (!r.ok) lastFail = r.last;
+    const result = finalResults[g];
+    if (!result.ok || !groups[g].every((_, index) => Boolean(result.value.get(index + 1)))) {
+      const why: GeminiFail = result.ok ? { status: 502, msg: `the model did not return every answer in group ${g + 1}` } : result.last;
+      const f = describeFailure(why, auth.owner);
+      return fail(f.code, 'ExamMate could not complete every answer in this paper. Please try again.', f.status, `answering ${questions.length} questions: ${why.msg}`);
+    }
     for (let i = 0; i < groups[g].length; i++) {
-      const answer = r.ok ? r.value.get(i + 1) : undefined;
-      if (!answer) missing++;
-      items.push({ label: groups[g][i].label, answer: answer || NO_ANSWER });
+      items.push({ label: groups[g][i].label, answer: result.value.get(i + 1)! });
     }
   }
-
-  // Nothing answered at all: explain why. Some answered: give those, and mark only the missing ones.
-  if (missing === items.length) {
-    const why: GeminiFail = lastFail ?? { status: 502, msg: 'the model sent back no usable answers' };
-    const f = describeFailure(why, auth.owner);
-    return fail(f.code, f.error, f.status, `answering ${questions.length} questions: ${why.msg}`);
-  }
-  const text = items.map((i) => (i.label ? i.label + '. ' : '') + i.answer).join('\n');
-  return json({ items, text, model: read.model, partial: missing });
+  // One line per point. A one-line answer stays on its question's line ("Section A, Question 1. ..."); a list gets the
+  // question label on its own line, then each point on its own line, so "THREE things" is read and shown as three things.
+  const text = items
+    .flatMap((i) => {
+      const lines = i.answer.split('\n');
+      if (lines.length === 1) return [(i.label ? i.label + '. ' : '') + lines[0]];
+      return i.label ? [i.label + '.', ...lines] : lines;
+    })
+    .join('\n');
+  return json({ items, text, model: read.model, partial: 0, questionCount: questions.length });
 }

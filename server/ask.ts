@@ -1,3 +1,4 @@
+import { speakSymbols } from '../src/lib/text';
 import { verify, type Store } from './license';
 import { json, secret } from './http';
 import { describeFailure, generate } from './gemini';
@@ -51,7 +52,14 @@ const SCHEMA = {
 };
 
 /** Keeps spoken text clean: no markdown characters, one line, not too long. */
-export const cleanSpoken = (t: string) => t.replace(/[*_#`>~]/g, '').replace(/\s+/g, ' ').trim().slice(0, 700);
+export const cleanSpoken = (t: string) => speakSymbols(
+  // Strip only clear Markdown emphasis before symbol speech, so **bold** is not announced as multiplication.
+  t.replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__((?:[^_]|_(?!_))+?)__/g, '$1')
+    .replace(/(?<!\*)\*([^\s*](?:[^*]*?[^\s*])?)\*(?!\*)/g, '$1')
+    .replace(/(?<!_)_([^\s_](?:[^_]*?[^\s_])?)_(?!_)/g, '$1')
+).replace(/^\s{0,3}#{1,6}\s+/gm, '')
+  .replace(/[`#~]/g, '').replace(/\s+/g, ' ').trim().slice(0, 700);
 
 /** Reads the model's JSON. Unknown actions become "none". Returns null if there is nothing usable. */
 export function parseIntent(raw: string): { action: Action; answer: string } | null {

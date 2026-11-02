@@ -42,6 +42,22 @@ test('uses live rate and voice options', () => {
   assert.deepEqual([speech.spoken[0].rate, speech.spoken[0].voiceURI], [0.8, 'v1']);
 });
 
+test('changing pace re-segments the active sentence without losing the current context', () => {
+  const { e, speech } = make({ mode: 'clause' });
+  e.start('One, two, three. Four, five, six.');
+  assert.equal(speech.last, 'One,');
+  speech.finish();
+  (e as any).clock.advance(3000);
+  const before = e.getSnapshot().idx;
+  assert.equal(e.getSnapshot().phrases[before], 'two,');
+
+  e.setOptions({ mode: 'sentence', rate: 0.9 });
+  assert.deepEqual(e.getSnapshot().phrases, ['One, two, three.', 'Four, five, six.']);
+  assert.equal(e.getSnapshot().idx, 0, 'the containing sentence is selected to keep context');
+  assert.equal(speech.last, 'One, two, three.', 'the active sentence restarts under the new pace');
+  assert.equal(speech.spoken.at(-1)?.rate, 0.9);
+});
+
 test('start with empty or blank text does nothing', () => {
   const { e, speech } = make();
   assert.equal(e.start('   '), false);
@@ -222,4 +238,24 @@ test('restarting while reading ignores the old session', () => {
   clock.advance(10_000);
   assert.equal(speech.last, 'New one.');
   assert.equal(e.getSnapshot().phrases.length, 1);
+});
+
+test('speaks mathematical operators by meaning while preserving the visible expression', () => {
+  const { e, speech } = make({ mode: 'sentence' });
+  e.start('x >= 2.');
+  assert.equal(e.getSnapshot().lines[0], 'x >= 2.');
+  assert.match(speech.last!, /greater than or equal to/);
+});
+
+test('reads source code as separate spoken lines and announces line transitions', () => {
+  const { e, clock, speech } = make({ mode: 'sentence', gapS: 0, pw: 0 });
+  const source = '```c\nint main() {\n  return a >= 2;\n}\n```';
+  e.start(source);
+  assert.match(speech.last!, /^Line one\./);
+  assert.match(speech.last!, /open parenthesis.*open brace/);
+  speech.finish();
+  clock.advance(1);
+  assert.match(speech.last!, /^Next line\./);
+  assert.match(speech.last!, /greater than or equal sign/);
+  assert.equal(e.getSnapshot().phrases.length, 3);
 });

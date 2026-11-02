@@ -47,6 +47,9 @@ export function parseDeviceClaimResult(raw: unknown): DeviceClaim {
   }
 }
 
+export interface AdminGuest { id: string; username: string; label: string; salt: string; passwordHash: string; active: boolean; createdAt: string }
+export interface AdminAuthState { salt: string; passwordHash: string; sessionVersion: number; parentDeviceId: string | null; ownerTokenVersion: string; guests: AdminGuest[] }
+
 export interface Store {
   get(key: string): Promise<License | null>;
   put(lic: License): Promise<void>;
@@ -56,6 +59,9 @@ export interface Store {
   claimDevice?(key: string, deviceId: string): Promise<DeviceClaim>;
   /** Adds `delta` to a counter that expires after `ttlSec`; returns the new value. delta 0 just reads. */
   hit(key: string, ttlSec: number, delta?: number): Promise<number>;
+  /** Persistent parent-admin credentials and guest accounts. Optional only for lightweight test/custom stores. */
+  getAdminAuthState?(): Promise<AdminAuthState | null>;
+  putAdminAuthState?(state: AdminAuthState): Promise<void>;
 }
 
 export type Fail = { ok: false; status: number; error: string };
@@ -131,8 +137,10 @@ export async function verify(
   const p = readToken(token, secret);
   if (!p || !validDevice(deviceId) || p.d !== deviceId) return { ok: false, status: 401, error: 'Invalid token.' };
   if (p.o) {
-    // owner device: valid while the admin password has not changed
-    if (!adminPassword || p.v !== ownerVersion(secret, adminPassword)) return { ok: false, status: 403, error: 'Owner sign-in expired. Sign in again.' };
+    // Existing owner devices are revoked when the parent admin changes their password.
+    const authState = await store.getAdminAuthState?.();
+    const currentVersion = authState?.ownerTokenVersion || (adminPassword ? ownerVersion(secret, adminPassword) : '');
+    if (!currentVersion || p.v !== currentVersion) return { ok: false, status: 403, error: 'Owner sign-in expired. Sign in again.' };
     return { ok: true, key: 'OWNER', owner: true };
   }
   const lic = await store.get(p.k);

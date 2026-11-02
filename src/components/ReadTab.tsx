@@ -1,11 +1,16 @@
 'use client';
 import type { ChangeEvent, RefObject } from 'react';
 import type { Resume, Settings } from '../lib/settings';
-import { Icon, Segmented, Spinner } from './ui';
+import { Icon, Segmented } from './ui';
 
 export interface Shot {
   url: string;
+  urls?: string[];
   busy: boolean;
+  message?: string;
+  detailText?: string;
+  progress?: number;
+  totalPages?: number;
   title: string;
   help: string;
   detail?: string;
@@ -19,7 +24,6 @@ export interface ReadProps {
   setText(t: string): void;
   msg: string;
   shot: Shot | null;
-  count: number;
   resume: Resume | null;
   camRef: RefObject<HTMLInputElement | null>;
   galRef: RefObject<HTMLInputElement | null>;
@@ -35,6 +39,8 @@ export interface ReadProps {
 }
 
 export default function ReadTab(p: ReadProps) {
+  const previewUrls = p.shot?.urls?.length ? p.shot.urls : p.shot ? [p.shot.url] : [];
+  const previewLimit = 8;
   const pick = (cb: (f: File[]) => void) => (e: ChangeEvent<HTMLInputElement>) => {
     const f = Array.from(e.target.files ?? []);
     e.target.value = '';
@@ -44,12 +50,12 @@ export default function ReadTab(p: ReadProps) {
   return (
     <>
       <header className="head">
-        <h1 className="title">Exam Mate</h1>
-        <p className="sub">Snap the questions. It reads the answers slowly so you can write them down.</p>
+        <h1 className="title">Read your paper</h1>
+        <p className="sub">Upload pages or add text to begin.</p>
       </header>
 
       <section className="card hero" aria-label="Photo of the questions">
-        <h2>Photo of the questions</h2>
+        <h2>Upload paper</h2>
         <Segmented label="Answer mode" value={p.settings.style}
           options={[{ value: 'quick', label: 'Quick answer' }, { value: 'learn', label: 'Learn' }]}
           onChange={p.setStyle} />
@@ -58,17 +64,21 @@ export default function ReadTab(p: ReadProps) {
 
         {p.shot && (
           <div className="shot" aria-live="polite">
-            <img className="thumb" src={p.shot.url} alt="Your photo" />
+            <div className="shot-preview" aria-label={`${p.shot.totalPages ?? previewUrls.length} selected pages`}>
+              {previewUrls.slice(0, previewLimit).map((url, i) => <img className="thumb" key={`${url}-${i}`} src={url} alt={`Selected page ${i + 1}`} />)}
+              {previewUrls.length > previewLimit && <span className="thumb-more">+{previewUrls.length - previewLimit} more</span>}
+            </div>
+            <p className="page-count">{p.shot.totalPages ?? previewUrls.length} pages selected</p>
             <div className="shot-text">
-              <strong>{p.shot.busy && <Spinner />} {p.shot.title}</strong>
+              <strong>{p.shot.busy && <span className="ai-orb" aria-hidden="true" />} {p.shot.title}</strong>
               <p>{p.shot.help}</p>
+              {p.shot.busy && <><div className="processing-track"><i style={{ width: `${Math.max(5, Math.min(100, p.shot.progress ?? 0))}%` }} /></div><small>{p.shot.message || 'Working through your pages'}{p.shot.totalPages ? ` · ${p.shot.totalPages} pages` : ''}</small><span className="processing-shimmer" aria-hidden="true" /></>}
             </div>
             {p.shot.detail && <details><summary>Technical details</summary><pre>{p.shot.detail}</pre></details>}
             {p.shot.busy && <button className="btn secondary" onClick={p.onCancel}>Stop</button>}
             {p.shot.canRetry && <button className="btn secondary" onClick={p.onRetry}>Try again</button>}
           </div>
         )}
-        <p className="fine">{p.count} photo{p.count === 1 ? '' : 's'} answered today on this phone</p>
 
         <input ref={p.camRef} type="file" accept="image/*" capture="environment" hidden onChange={pick(p.onPhotos)} />
         <input ref={p.galRef} type="file" accept="image/*" multiple hidden onChange={pick(p.onPhotos)} />
@@ -76,8 +86,9 @@ export default function ReadTab(p: ReadProps) {
 
       <section className="card" aria-label="Text to read">
         <h2>Text to read</h2>
-        <textarea className="field area" value={p.text} onChange={(e) => p.setText(e.target.value)}
+        <textarea className={'field area' + (p.text.includes('```') ? ' has-code' : '')} value={p.text} onChange={(e) => p.setText(e.target.value)}
           placeholder="Answers appear here. You can also paste any text." aria-label="Text to read" />
+        {p.text.includes('```') && <p className="code-note">Code blocks preserve their original lines and are read one line at a time.</p>}
         {p.resume && (
           <button className="btn tinted" onClick={p.onResume}><Icon name="repeat" size={18} /> Resume from phrase {p.resume.idx + 1}</button>
         )}

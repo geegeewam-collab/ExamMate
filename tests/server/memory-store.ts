@@ -1,8 +1,9 @@
-import type { License, Store } from '../../server/license';
+import type { AdminAuthState, License, Store } from '../../server/license';
 
 export function memoryStore(): Store & { counters: Map<string, number>; licenses: Map<string, License> } {
   const licenses = new Map<string, License>();
   const counters = new Map<string, number>();
+  let adminState: AdminAuthState | null = null;
   return {
     licenses,
     counters,
@@ -10,6 +11,8 @@ export function memoryStore(): Store & { counters: Map<string, number>; licenses
     async put(l) { licenses.set(l.key, structuredClone(l)); },
     async del(k) { licenses.delete(k); },
     async list() { return [...licenses.values()].map((l) => structuredClone(l)); },
+    async getAdminAuthState() { return adminState ? structuredClone(adminState) : null; },
+    async putAdminAuthState(state) { adminState = structuredClone(state); },
     async claimDevice(k, deviceId) {
       const lic = licenses.get(k);
       if (!lic) return { status: 'missing' as const };
