@@ -63,6 +63,16 @@ export interface NativeTTS {
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+class NativeTimeout extends Error {}
+/** Rejects with a NativeTimeout if a native call never answers, so the reader can show a real reason instead of hanging. */
+function withTimeout<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new NativeTimeout(`${what} did not respond`)), ms);
+  });
+  return Promise.race([work, limit]).finally(() => { if (timer) clearTimeout(timer); });
+}
 const errorMessage = (error: unknown) => String((error as any)?.message ?? error ?? 'Speech failed');
 const isMissingNativePlugin = (message: string) => /not implemented|plugin .*not found|not registered|unimplemented/i.test(message);
 const isSpeechUnavailable = (message: string) => /not implemented|not registered|not installed|unavailable|not initiali|no speech|no .*engine|not ready|not connected|engine.*not available|engine.*unavailable|compatible speech voice|no compatible speech voice|language.*not.*(available|supported|installed)|missing.*(voice|data)/i.test(message);
@@ -142,10 +152,13 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
   };
 
   return {
+    // The phone's speech engine can need several seconds to wake up the first time. Every native call
+    // above is bounded (about 10 s in total), so this only has to outlast them.
+    startTimeoutMs: 12000,
     speak(text, { rate }, h) {
       const request = ++generation;
       void (async () => {
-        const tts = await load();
+        const tts = await withTimeout(load(), 3000, 'Speech plugin');
         if (request !== generation) return;
         if (!tts) {
           h.onerror('unsupported');
@@ -154,13 +167,23 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
         native = tts;
 
         // If pause/next called stop(), do not let its asynchronous native stop
-        // race with this new utterance and silence it.
-        await pendingStop.catch(() => undefined);
+        // race with this new utterance and silence it. A stop that never answers
+        // must not block speech forever.
+        await withTimeout(pendingStop.catch(() => undefined), 1000, 'Speech stop').catch(() => undefined);
         if (request !== generation) return;
 
-        const lang = await pickLanguage(tts);
+        let lang: string;
+        try {
+          lang = await withTimeout(pickLanguage(tts), 5000, 'Speech language check');
+        } catch (error) {
+          // A slow or stuck language probe is not proof that speaking will fail. Try the phone's own
+          // language and let speak() report a real error if that is wrong. Real "no voice" errors still surface.
+          if (!(error instanceof NativeTimeout)) throw error;
+          languagePromise = null;
+          lang = preferred[0] || 'en-US';
+        }
         if (request !== generation) return;
-        await ensureRangeListener(tts);
+        await withTimeout(ensureRangeListener(tts), 1000, 'Speech listener').catch(() => undefined);
         if (request !== generation) return;
 
         let started = false;
@@ -231,9 +254,24 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
   };
 }
 
+/**
+ * Capacitor plugins are Proxy objects that answer EVERY property name, including `then`.
+ * Returning one straight out of a promise makes JavaScript treat it as a thenable and wait
+ * for a `then` call that never completes, so the load never finishes and no speech ever
+ * starts. Wrapping the plugin in a plain object avoids that.
+ */
+const plainTTS = (plugin: any): NativeTTS => ({
+  speak: (o) => plugin.speak(o),
+  stop: () => plugin.stop(),
+  isLanguageSupported: (o) => plugin.isLanguageSupported(o),
+  getSupportedLanguages: () => plugin.getSupportedLanguages(),
+  openInstall: () => plugin.openInstall(),
+  addListener: (eventName, listener) => plugin.addListener(eventName, listener),
+});
+
 const loadNativeTTS = (() => {
   let p: Promise<NativeTTS | null> | null = null;
-  return () => (p ??= import('@capacitor-community/text-to-speech').then((m) => m.TextToSpeech as unknown as NativeTTS).catch(() => null));
+  return () => (p ??= import('@capacitor-community/text-to-speech').then((m) => plainTTS(m.TextToSpeech)).catch(() => { p = null; return null; }));
 })();
 
 /** Opens Android's system TTS voice-data installer when a required voice is missing. */
@@ -370,7 +408,18 @@ let nativeMediaReady = false;
 async function loadNativeMedia(): Promise<NativeMediaPlugin | null> {
   if (!nativeMediaLoad) {
     nativeMediaLoad = import('@capacitor/core')
-      .then(({ registerPlugin }) => registerPlugin<NativeMediaPlugin>('ExamMateMedia'))
+      .then(({ registerPlugin }) => {
+        const plugin = registerPlugin<NativeMediaPlugin>('ExamMateMedia');
+        // A plain wrapper: returning the plugin Proxy itself from a promise never resolves (see plainTTS).
+        const plain: NativeMediaPlugin = {
+          activate: () => plugin.activate(),
+          update: (o) => plugin.update(o),
+          deactivate: () => plugin.deactivate(),
+          getAudioRoutes: () => plugin.getAudioRoutes(),
+          addListener: (eventName, listener) => plugin.addListener(eventName, listener),
+        };
+        return plain;
+      })
       .catch((error) => {
         console.warn('[ExamMate] Native media bridge is not installed.');
         return null;

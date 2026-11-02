@@ -108,7 +108,8 @@ export async function answerPhotos(
       image = await toDataURL(await shrink(files[i]));
     } catch (e) {
       if (e instanceof AnswerError) throw e;
-      throw new AnswerError(`Could not prepare page ${i + 1}. Try saving the image as JPG or PNG and upload it again.`);
+      const reason = (e as Error)?.message || String(e);
+      throw new AnswerError(`Could not prepare page ${i + 1}. Try saving the image as JPG or PNG and upload it again.`, 0, reason.slice(0, 300));
     }
 
     const candidate = [...batchImages, image];

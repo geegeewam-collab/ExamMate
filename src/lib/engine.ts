@@ -11,6 +11,12 @@ export interface Speech {
   cancel(): void;
   /** Unlocks speech on mobile browsers; call from a user gesture. */
   prime?(): void;
+  /**
+   * How long the reader waits for a phrase to report that it started before it
+   * assumes there is no audio. Native engines can take several seconds to wake
+   * up the first time, so they ask for longer than the 3.5 s default.
+   */
+  startTimeoutMs?: number;
 }
 
 export interface Clock {
@@ -220,7 +226,7 @@ export class ReaderEngine {
           this.halt();
           this.set({ state: 'paused', phase: 'listen', gapMs: 0, gapEndsAt: 0, hint: NO_AUDIO });
         }
-      }, 3500);
+      }, this.speech.startTimeoutMs ?? 3500);
     }
 
     this.speech.speak(text, { rate: this.opts.rate, voiceURI: this.opts.voice }, {
@@ -257,7 +263,8 @@ export class ReaderEngine {
         this.halt();
         this.set({
           state: 'paused', phase: 'listen', gapMs: 0, gapEndsAt: 0,
-          hint: e === 'unsupported' ? NO_VOICE : SPEECH_FAILED,
+          // The short technical reason is appended so a screenshot shows what actually failed.
+          hint: e === 'unsupported' ? NO_VOICE : SPEECH_FAILED + (e && e !== 'speech-failed' ? ` (${String(e).slice(0, 120)})` : ''),
         });
       },
     });

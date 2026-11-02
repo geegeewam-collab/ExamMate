@@ -280,3 +280,22 @@ test('reads source code as separate spoken lines and announces line transitions'
   assert.match(speech.last!, /greater than or equal sign/);
   assert.equal(e.getSnapshot().phrases.length, 3);
 });
+
+test('a speech engine that needs longer to wake up is not cut off at 3.5 seconds', () => {
+  const { e, clock, speech } = make();
+  speech.autoStart = false;
+  (speech as any).startTimeoutMs = 12_000;
+  e.start('Slow engine.');
+  clock.advance(11_999);
+  assert.equal(e.getSnapshot().state, 'playing');
+  clock.advance(1);
+  assert.equal(e.getSnapshot().state, 'paused');
+  assert.equal(e.getSnapshot().hint, NO_AUDIO);
+});
+
+test('a speech failure shows its short technical reason so it can be diagnosed from a screenshot', () => {
+  const { e, speech } = make();
+  e.start('Fail.');
+  speech.fail('Speech plugin did not respond');
+  assert.match(e.getSnapshot().hint, /Speech could not start.*Speech plugin did not respond/);
+});
