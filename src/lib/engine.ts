@@ -64,7 +64,9 @@ export interface Snapshot {
   hint: string;
 }
 
-export const NO_VOICE = 'No compatible speech voice is available. On Android, open Settings > Text-to-speech output and install a voice for your language. On iPhone, check Settings > Accessibility > Spoken Content and download a voice. Return to Exam Mate and press Resume.';
+export const NO_VOICE = 'Speech output is not ready. Check that your device has a text-to-speech engine and a voice installed, then tap Resume.';
+export const SPEECH_FAILED = 'Speech could not start. Check your device audio output and text-to-speech settings, then tap Resume.';
+export const NO_AUDIO = 'Audio has not started. Check your speaker or connected headphones and your device text-to-speech output, then tap Resume to retry.';
 
 const EMPTY: Snapshot = {
   active: false,
@@ -199,9 +201,13 @@ export class ReaderEngine {
     }
     const my = ++this.session;
     this.speech.cancel();
+    this.clock.clearTimeout(this.hintTimer);
+    this.hintTimer = null;
     this.set({ idx: i, state: 'playing', phase: 'listen', countdown: 0, gapMs: 0, gapEndsAt: 0 });
 
     const phrase = this.snap.phrases[i];
+    // A start signal must be received for every phrase, not just the first one.
+    this.spoke = false;
     const isCode = this.snap.codeOf[i] === true;
     const spoken = isCode ? speakCodeLine(phrase, this.snap.codeLineNumber[i] || 1) : speakSymbols(phrase);
     const text = this.opts.punct && !isCode ? speakPunctuation(spoken) : spoken;
@@ -209,7 +215,11 @@ export class ReaderEngine {
     if (!this.spoke && this.hintTimer == null) {
       this.hintTimer = this.clock.setTimeout(() => {
         this.hintTimer = null;
-        if (!this.spoke && this.snap.state === 'playing') this.set({ hint: 'No sound? Tap Pause, then Resume.' });
+        if (!this.spoke && this.snap.state === 'playing') {
+          // A phrase that never reports speech start must not be skipped silently.
+          this.halt();
+          this.set({ state: 'paused', phase: 'listen', gapMs: 0, gapEndsAt: 0, hint: NO_AUDIO });
+        }
       }, 3500);
     }
 
@@ -217,10 +227,14 @@ export class ReaderEngine {
       onstart: () => {
         if (my !== this.session) return;
         this.spoke = true;
+        this.clock.clearTimeout(this.hintTimer);
+        this.hintTimer = null;
         if (this.snap.hint) this.set({ hint: '' });
       },
       onend: () => {
         if (my !== this.session || this.snap.state !== 'playing') return;
+        this.clock.clearTimeout(this.hintTimer);
+        this.hintTimer = null;
         const twice = this.opts.twice;
         const again = twice && pass === 1;
         let gap = this.opts.gapS + wordCount(phrase) * this.opts.pw;
@@ -237,15 +251,14 @@ export class ReaderEngine {
         this.timer = this.clock.setTimeout(go, ms);
       },
       onerror: (e) => {
-        if (my !== this.session || e === 'interrupted' || e === 'canceled') return;
-        if (e === 'unsupported') {
-          this.halt();
-          this.set({ state: 'paused', phase: 'listen', gapMs: 0, gapEndsAt: 0, hint: NO_VOICE });
-          return;
-        }
-        this.timer = this.clock.setTimeout(() => {
-          if (my === this.session) this.run(i + 1);
-        }, 400);
+        if (my !== this.session) return;
+        // Never skip to the next phrase after a speech failure. Doing so can
+        // make an entire paper appear to progress while the student hears nothing.
+        this.halt();
+        this.set({
+          state: 'paused', phase: 'listen', gapMs: 0, gapEndsAt: 0,
+          hint: e === 'unsupported' ? NO_VOICE : SPEECH_FAILED,
+        });
       },
     });
   }

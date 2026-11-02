@@ -86,6 +86,16 @@ if (!noSync) {
   // A fresh iOS platform is generated only after the static web bundle exists.
   if (platform === 'ios' && !existsSync('ios/App')) run('npx', ['cap', 'add', 'ios']);
   run('npx', ['cap', 'sync', platform]);
+  if (platform === 'android') {
+    // TTS is the reader's core feature. Do not produce an APK if Capacitor
+    // failed to wire its native implementation into the Android Gradle project.
+    const settingsGradle = readFileSync('android/capacitor.settings.gradle', 'utf8');
+    const appGradle = readFileSync('android/app/capacitor.build.gradle', 'utf8');
+    if (!settingsGradle.includes("include ':capacitor-community-text-to-speech'") ||
+        !appGradle.includes("implementation project(':capacitor-community-text-to-speech')")) {
+      throw new Error('Android text-to-speech is not linked into the native project. Check @capacitor-community/text-to-speech installation, then run npm run cap:sync again. The APK was not built.');
+    }
+  }
   if (platform === 'ios') run('node', ['scripts/setup-ios.mjs']);
 }
 console.log(`\n${platform === 'ios' ? 'iOS' : 'Android'} bundle ready.`);

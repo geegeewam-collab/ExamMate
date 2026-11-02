@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ReaderEngine } from '../src/lib/engine';
+import { NO_AUDIO, ReaderEngine } from '../src/lib/engine';
 import { FakeClock, FakeSpeech, OPTS } from './helpers';
 
 const make = (o = {}) => {
@@ -177,33 +177,54 @@ test('stop during countdown cancels everything', () => {
   assert.equal(clock.pending, 0);
 });
 
-test('a real speech error skips ahead after 400ms; "interrupted" is ignored', () => {
+test('a speech interruption or engine error pauses on the current phrase instead of silently skipping it', () => {
   const { e, clock, speech } = make({ mode: 'sentence' });
   e.start('A. B.');
   speech.fail('interrupted');
-  clock.advance(1000);
+  clock.advance(10_000);
   assert.equal(speech.spoken.length, 1);
+  assert.equal(e.getSnapshot().state, 'paused');
+  assert.equal(e.getSnapshot().idx, 0);
+  assert.match(e.getSnapshot().hint, /Speech could not start/);
+  e.resume();
+  assert.equal(speech.spoken.length, 2, 'the student can retry the same phrase');
   speech.fail('synthesis-failed');
-  clock.advance(399);
-  assert.equal(speech.spoken.length, 1);
-  clock.advance(1);
-  assert.equal(speech.last, 'B.');
+  clock.advance(10_000);
+  assert.equal(speech.spoken.length, 2, 'a failed retry does not advance to the next phrase');
+  assert.equal(e.getSnapshot().idx, 0);
 });
 
-test('shows a hint when the voice never starts, clears it once it does', () => {
+test('pauses on the current phrase when speech never starts and Resume retries it', () => {
   const { e, clock, speech } = make();
   speech.autoStart = false;
-  e.start('Silent.');
+  e.start('Silent. Next phrase.');
   clock.advance(3499);
-  assert.equal(e.getSnapshot().hint, '');
+  assert.equal(e.getSnapshot().state, 'playing');
   clock.advance(1);
-  assert.match(e.getSnapshot().hint, /No sound/);
+  assert.equal(e.getSnapshot().state, 'paused');
+  assert.equal(e.getSnapshot().idx, 0, 'the silent phrase is not skipped');
+  assert.equal(e.getSnapshot().hint, NO_AUDIO);
+  speech.autoStart = true;
+  e.resume();
+  assert.equal(e.getSnapshot().state, 'playing');
+  assert.equal(speech.spoken.length, 2, 'Resume retries the same phrase');
 });
 
 test('no hint when the voice starts normally', () => {
   const { e, clock } = make();
   e.start('Fine.');
   clock.advance(10_000);
+  assert.equal(e.getSnapshot().hint, '');
+});
+
+test('the no-audio watchdog is reset for every phrase and cannot leak into the next phrase', () => {
+  const { e, clock, speech } = make({ mode: 'sentence' });
+  e.start('First. Second.');
+  speech.finish();
+  clock.advance(2500); // writing gap, then the second phrase starts
+  assert.equal(e.getSnapshot().idx, 1);
+  clock.advance(3500);
+  assert.equal(e.getSnapshot().state, 'playing');
   assert.equal(e.getSnapshot().hint, '');
 });
 

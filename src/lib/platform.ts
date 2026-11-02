@@ -59,29 +59,71 @@ export interface NativeTTS {
   isLanguageSupported(o: { lang: string }): Promise<{ supported: boolean }>;
   getSupportedLanguages?(): Promise<{ languages: string[] }>;
   openInstall?(): Promise<void>;
+  addListener?(eventName: 'onRangeStart', listener: (event: { start: number; end: number; spokenWord: string }) => void): Promise<{ remove(): Promise<void> }>;
 }
 
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const errorMessage = (error: unknown) => String((error as any)?.message ?? error ?? 'Speech failed');
+const isMissingNativePlugin = (message: string) => /not implemented|plugin .*not found|not registered|unimplemented/i.test(message);
+const isSpeechUnavailable = (message: string) => /not implemented|not registered|not installed|unavailable|not initiali|no speech|no .*engine|not ready|not connected|engine.*not available|engine.*unavailable|compatible speech voice|no compatible speech voice|language.*not.*(available|supported|installed)|missing.*(voice|data)/i.test(message);
+
+/**
+ * Native TTS is asynchronous twice over: Android's TTS engine initializes after
+ * the Capacitor bridge is ready, and speak() resolves only after the utterance
+ * finishes. Probe readiness with a bounded retry, serialize stop-before-speak,
+ * and use onRangeStart where the platform exposes it so the reader can tell when
+ * audio has actually begun. Android routes TTS to the currently selected system
+ * output (speaker, wired headset or Bluetooth); the app must not force a route.
+ */
 export function createNativeSpeech(load: () => Promise<NativeTTS | null>, preferred: string[]): Speech {
   let languagePromise: Promise<string> | null = null;
+  let generation = 0;
+  let native: NativeTTS | null = null;
+  let pendingStop: Promise<void> = Promise.resolve();
+  let rangeListenerPromise: Promise<void> | null = null;
+  let onCurrentSpeechStart: (() => void) | null = null;
+  let startFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
   const chooseLanguage = async (tts: NativeTTS): Promise<string> => {
-    const available: string[] = [];
-    try { available.push(...((await tts.getSupportedLanguages?.())?.languages ?? [])); } catch { /* use per-locale probing below */ }
+    let lastError = '';
     const canonical = (value: string) => value.toLowerCase().replace(/_/g, '-');
-    for (const candidate of preferred) {
-      const actual = available.find((value) => canonical(value) === canonical(candidate))
-        ?? available.find((value) => canonical(value).split('-')[0] === canonical(candidate).split('-')[0]);
-      if (actual) return actual;
-      try { if ((await tts.isLanguageSupported({ lang: candidate })).supported) return candidate; } catch { /* try the next locale */ }
+
+    // TextToSpeech is created asynchronously by Android. A first language query
+    // can legitimately be empty while its service is still initializing.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      let available: string[] = [];
+      try {
+        available = (await tts.getSupportedLanguages?.())?.languages ?? [];
+      } catch (error) {
+        lastError = errorMessage(error);
+        if (isMissingNativePlugin(lastError)) throw new Error('Native text-to-speech is not installed in this app build. Rebuild after syncing Capacitor plugins.');
+      }
+
+      for (const candidate of preferred) {
+        const match = available.find((value) => canonical(value) === canonical(candidate))
+          ?? available.find((value) => canonical(value).split('-')[0] === canonical(candidate).split('-')[0]);
+        if (match) return match;
+
+        try {
+          if ((await tts.isLanguageSupported({ lang: candidate })).supported) return candidate;
+        } catch (error) {
+          lastError = errorMessage(error);
+          if (isMissingNativePlugin(lastError)) throw new Error('Native text-to-speech is not installed in this app build. Rebuild after syncing Capacitor plugins.');
+        }
+      }
+
+      if (available.length) break; // The engine is ready; none of the requested languages is installed.
+      if (attempt < 3) await wait(250);
     }
-    if (available.length) {
-      throw new Error('No compatible speech voice is installed for your device language. Install a voice for that language in your device speech settings, then retry.');
-    }
-    throw new Error('No speech engine or compatible language voice is installed. Enable a text-to-speech engine in your device settings, then retry.');
+
+    if (lastError) throw new Error(lastError);
+    throw new Error('No compatible speech voice is installed for your device language. Install a voice for that language in your device speech settings, then retry.');
   };
+
   const pickLanguage = (tts: NativeTTS): Promise<string> => {
     if (!languagePromise) {
       languagePromise = chooseLanguage(tts).catch((error) => {
-        // Do not cache failures: a user may install a voice in Settings and retry without restarting Exam Mate.
+        // Do not cache failures: a voice may be installed while the app is open.
         languagePromise = null;
         throw error;
       });
@@ -89,32 +131,103 @@ export function createNativeSpeech(load: () => Promise<NativeTTS | null>, prefer
     return languagePromise;
   };
 
+  const ensureRangeListener = (tts: NativeTTS): Promise<void> => {
+    if (!tts.addListener) return Promise.resolve();
+    if (!rangeListenerPromise) {
+      rangeListenerPromise = tts.addListener('onRangeStart', () => {
+        onCurrentSpeechStart?.();
+      }).then(() => undefined).catch(() => undefined);
+    }
+    return rangeListenerPromise;
+  };
+
   return {
     speak(text, { rate }, h) {
+      const request = ++generation;
       void (async () => {
         const tts = await load();
+        if (request !== generation) return;
         if (!tts) {
-          if (hasWebSpeech()) return createWebSpeech().speak(text, { rate, voiceURI: '' }, h);
-          return h.onerror('unsupported');
+          h.onerror('unsupported');
+          return;
         }
-        try {
-          const lang = await pickLanguage(tts);
-          const speaking = tts.speak({
-            text, lang, rate: Math.min(2, Math.max(0.1, rate)), pitch: 1, volume: 1,
-            queueStrategy: 0, category: 'playback',
-          });
-          // The native plugin resolves when the utterance finishes; it does not expose onStart.
+        native = tts;
+
+        // If pause/next called stop(), do not let its asynchronous native stop
+        // race with this new utterance and silence it.
+        await pendingStop.catch(() => undefined);
+        if (request !== generation) return;
+
+        const lang = await pickLanguage(tts);
+        if (request !== generation) return;
+        await ensureRangeListener(tts);
+        if (request !== generation) return;
+
+        let started = false;
+        if (startFallbackTimer) clearTimeout(startFallbackTimer);
+        const markStarted = () => {
+          if (request !== generation || started) return;
+          started = true;
+          if (startFallbackTimer) clearTimeout(startFallbackTimer);
+          startFallbackTimer = null;
+          onCurrentSpeechStart = null;
           h.onstart();
+        };
+        onCurrentSpeechStart = markStarted;
+
+        // Some Android vendors / older TTS engines expose the listener but do
+        // not emit range callbacks. Keep a bounded fallback so those devices
+        // still work; an actual native rejection is always surfaced below.
+        startFallbackTimer = setTimeout(markStarted, 1400);
+
+        try {
+          const speaking = tts.speak({
+            text,
+            lang,
+            rate: Math.min(2, Math.max(0.1, rate)),
+            pitch: 1,
+            volume: 1,
+            queueStrategy: 0,
+            category: 'playback', // Used by iOS; Android follows the system's selected audio route.
+          });
           await speaking;
+          if (request !== generation) return;
+          if (startFallbackTimer) clearTimeout(startFallbackTimer);
+          startFallbackTimer = null;
+          markStarted(); // Covers very short utterances or services without range callbacks.
+          onCurrentSpeechStart = null;
           h.onend();
         } catch (error) {
-          const message = String((error as any)?.message ?? error);
-          h.onerror(/no speech|compatible speech voice|no .*engine|not.*(available|supported|installed)|unavailable|not initiali|language.*not/i.test(message) ? 'unsupported' : message || 'error');
+          if (request !== generation) return;
+          if (startFallbackTimer) clearTimeout(startFallbackTimer);
+          startFallbackTimer = null;
+          onCurrentSpeechStart = null;
+          const message = errorMessage(error);
+          h.onerror(isSpeechUnavailable(message) ? 'unsupported' : message || 'speech-failed');
         }
-      })();
+      })().catch((error) => {
+        if (request !== generation) return;
+        onCurrentSpeechStart = null;
+        const message = errorMessage(error);
+        h.onerror(isSpeechUnavailable(message) ? 'unsupported' : message);
+      });
     },
-    cancel() { void load().then((tts) => tts?.stop()).catch(() => undefined); },
-    prime() { void load(); },
+    cancel() {
+      generation++;
+      onCurrentSpeechStart = null;
+      if (startFallbackTimer) clearTimeout(startFallbackTimer);
+      startFallbackTimer = null;
+      const tts = native;
+      if (!tts) return;
+      // Queue native stop operations and make the next speak() await this promise.
+      pendingStop = pendingStop.catch(() => undefined).then(() => tts.stop()).catch(() => undefined);
+      void pendingStop.catch(() => undefined);
+    },
+    prime() {
+      // Native TTS has no browser-style autoplay gate. Loading it here is harmless
+      // and avoids paying the dynamic-import cost at the first spoken phrase.
+      void load().then((tts) => { if (tts) native = tts; }).catch(() => undefined);
+    },
   };
 }
 
@@ -203,6 +316,10 @@ function makeKeepAlive(): HTMLAudioElement {
   return a;
 }
 export function startKeepAlive() {
+  // Native TTS is rendered by Android/iOS and follows the operating system's
+  // audio route. Do not run a silent WebView audio stream alongside it: that
+  // can compete for audio focus and is unnecessary for native background speech.
+  if (isNative()) return;
   kaWanted = true;
   try {
     (ka ??= makeKeepAlive()).play().catch(() => {});
