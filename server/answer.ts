@@ -111,7 +111,7 @@ export async function handleAnswer(req: Request, store: Store): Promise<Response
   // Step 1: read the photos and list the questions (short output, so it is quick).
   const read = await generate(
     apiKey,
-    { contents: [{ parts: [{ text: readPrompt }, ...photos] }], generationConfig: { temperature: 0, maxOutputTokens: 6000, responseMimeType: 'application/json', responseSchema: readSchema } },
+    { contents: [{ parts: [{ text: readPrompt }, ...photos] }], generationConfig: { temperature: 0, maxOutputTokens: 16000, responseMimeType: 'application/json', responseSchema: readSchema } },
     (d) => parseQuestions(replyText(d)),
     { timeoutMs: READ_CALL_MS, deadlineMs: READ_TOTAL_MS, noThinking: true, signal: req.signal },
   );
@@ -138,7 +138,7 @@ export async function handleAnswer(req: Request, store: Store): Promise<Response
     if (req.signal.aborted) return Promise.resolve({ ok: false as const, last: { status: 499, msg: 'client cancelled the request' }, trace: [] });
     return generate(
       apiKey,
-      { contents: [{ parts: [{ text: answerPrompt(style, group) }, ...photos] }], generationConfig: { temperature: 0.2, maxOutputTokens: 4000, responseMimeType: 'application/json', responseSchema: answerSchema } },
+      { contents: [{ parts: [{ text: answerPrompt(style, group) }, ...photos] }], generationConfig: { temperature: 0.2, maxOutputTokens: 16000, responseMimeType: 'application/json', responseSchema: answerSchema } },
       (d) => parseAnswers(replyText(d)),
       { models: [read.model], timeoutMs: ANSWER_CALL_MS, deadlineMs: remaining, noThinking: true, signal: req.signal },
     );

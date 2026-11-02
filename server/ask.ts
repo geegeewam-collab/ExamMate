@@ -51,7 +51,7 @@ const SCHEMA = {
   required: ['action', 'answer'],
 };
 
-/** Keeps spoken text clean: no markdown characters, one line, not too long. */
+/** Keeps spoken text clean: no markdown characters, one line. No length cap: the answer is as long as the question needs. */
 export const cleanSpoken = (t: string) => speakSymbols(
   // Strip only clear Markdown emphasis before symbol speech, so **bold** is not announced as multiplication.
   t.replace(/\*\*(.*?)\*\*/g, '$1')
@@ -59,7 +59,7 @@ export const cleanSpoken = (t: string) => speakSymbols(
     .replace(/(?<!\*)\*([^\s*](?:[^*]*?[^\s*])?)\*(?!\*)/g, '$1')
     .replace(/(?<!_)_([^\s_](?:[^_]*?[^\s_])?)_(?!_)/g, '$1')
 ).replace(/^\s{0,3}#{1,6}\s+/gm, '')
-  .replace(/[`#~]/g, '').replace(/\s+/g, ' ').trim().slice(0, 700);
+  .replace(/[`#~]/g, '').replace(/\s+/g, ' ').trim();
 
 /** Reads the model's JSON. Unknown actions become "none". Returns null if there is nothing usable. */
 export function parseIntent(raw: string): { action: Action; answer: string } | null {
@@ -148,7 +148,7 @@ export async function handleAsk(req: Request, store: Store): Promise<Response> {
 
   const out = await generate(
     apiKey,
-    { contents: [{ parts: [{ text }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 800, responseMimeType: 'application/json', responseSchema: SCHEMA } },
+    { contents: [{ parts: [{ text }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 4000, responseMimeType: 'application/json', responseSchema: SCHEMA } },
     (d) => parseIntent((d.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text || '').join('').trim()),
     { models: fastModels(), timeoutMs: ASK_CALL_MS, deadlineMs: ASK_TOTAL_MS, noThinking: true, discoverModels: false },
   );
