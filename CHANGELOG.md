@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.1.8] - 2026-11-04
+
+### Reliability
+- Increased the photo-reading budget from 24 s to 50 s and the individual read-call timeout from 18 s to 36 s.
+- Increased the answer-stage per-call timeout to 35 s and the overall API processing budget to 108 s.
+- Increased the `/api/answer` route execution allowance to 120 s, leaving headroom for image reading, answer groups, retries and response delivery.
+- Kept page batching and bounded per-request image sizes; there is no fixed total page or question-count cap in the client flow.
+- Added regression coverage for large extracted papers to ensure all returned questions continue to be answered in order.
+- Bumped package version to 2.1.8, Android fallback versionCode to 10, and iOS build number to 10.
+
+### Notes
+- The natural student-answering policy is unchanged. The observed `reading the photo: time budget used up` failure occurs before that answer-style prompt is sent.
+- Full dependency-installed CI, a production Next.js build, and live Gemini latency testing must still be run before public rollout.
+
 ## [2.1.7] - 2026-11-04
 
 ### Changed

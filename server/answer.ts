@@ -46,12 +46,13 @@ async function mapConcurrent<T, R>(items: T[], limit: number, work: (item: T, in
   return results;
 }
 
-// The route may run for 60 s on Vercel. A typical paper takes 10 to 25 s; these limits only matter when Google is slow, and
-// they keep the worst case (read, then answer) inside the 60 s with room for the license check and the reply.
-export const TOTAL_MS = 52_000;
-export const READ_CALL_MS = 18_000;
-export const READ_TOTAL_MS = 24_000;
-export const ANSWER_CALL_MS = 24_000;
+// Keep the full paper request inside the route's 120 s execution window. Photo reading gets a larger
+// first-stage budget; answering keeps the remaining time and retries only incomplete groups. Client-side
+// page batching means long papers are processed across requests, with no fixed page or question-count cap.
+export const TOTAL_MS = 108_000;
+export const READ_CALL_MS = 36_000;
+export const READ_TOTAL_MS = 50_000;
+export const ANSWER_CALL_MS = 35_000;
 /** Maximum serialized payload for one request; client-side batching means this is not a paper/page-count limit. */
 export const MAX_REQUEST_BYTES = 4_000_000;
 /** Questions answered per Google call. Learn mode writes much more per question, so its groups are smaller. */

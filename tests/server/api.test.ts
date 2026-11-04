@@ -369,7 +369,7 @@ test('answer: oversized request is rejected but ordinary long-paper batches are 
 });
 
 /* ---------------- /api/answer: a whole exam paper ---------------- */
-import { groupSize } from '../../server/answer';
+import { groupSize, TOTAL_MS, READ_CALL_MS, READ_TOTAL_MS, ANSWER_CALL_MS } from '../../server/answer';
 
 /**
  * Fake Google for a paper with `count` questions. Step 1 lists them; step 2 answers whichever numbered questions it is given,
@@ -402,6 +402,13 @@ const paper = async (count: number, style: 'quick' | 'learn' = 'quick', answerGr
   const res = await handleAnswer(ans(withKey(h), { images: [img, img], style }), st);
   return { seen, res, data: await res.json() };
 };
+
+test('paper: photo reading has enough time for cold-start discovery and slow image understanding', () => {
+  assert.ok(READ_TOTAL_MS >= 45_000);
+  assert.ok(READ_CALL_MS >= 30_000);
+  assert.ok(READ_TOTAL_MS > READ_CALL_MS);
+  assert.ok(TOTAL_MS > READ_TOTAL_MS + ANSWER_CALL_MS);
+});
 
 test('paper: 15 questions are read once, then answered in groups at the same time', async () => {
   const { seen, res, data } = await paper(15);
@@ -480,8 +487,8 @@ test('paper: a batch with no questions completes so later page batches can conti
   assert.equal(seen.answers().length, 0, 'an empty cover/instructions batch does not trigger answer calls');
 });
 
-test('paper: every extracted question is processed beyond the former artificial cap', async () => {
-  const count = 60;
+test('paper: every extracted question is processed with no fixed question-count cap', async () => {
+  const count = 120;
   const { seen, res, data } = await paper(count);
   assert.equal(res.status, 200);
   assert.equal(data.items.length, count);

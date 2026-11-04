@@ -29,6 +29,17 @@ test('Android export refuses to build without native TTS registration', () => {
 
 test('iOS release metadata follows the package version', () => {
   const script = readFileSync(join(root, 'scripts/setup-ios.mjs'), 'utf8');
-  assert.match(script, /const appBuild = '9'/);
-  assert.match(script, /packageMeta\.version \|\| '2\.1\.7'/);
+  assert.match(script, /const appBuild = '10'/);
+  assert.match(script, /packageMeta\.version \|\| '2\.1\.8'/);
+});
+
+
+test('answer route timeout covers the expanded Gemini paper-processing budget', () => {
+  const route = readFileSync(join(root, 'app/api/answer/route.ts'), 'utf8');
+  const answer = readFileSync(join(root, 'server/answer.ts'), 'utf8');
+  assert.match(route, /export const maxDuration = 120/);
+  assert.match(answer, /TOTAL_MS = 108_000/);
+  assert.match(answer, /READ_CALL_MS = 36_000/);
+  assert.match(answer, /READ_TOTAL_MS = 50_000/);
+  assert.match(answer, /ANSWER_CALL_MS = 35_000/);
 });
