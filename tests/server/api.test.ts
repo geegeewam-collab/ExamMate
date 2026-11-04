@@ -416,6 +416,16 @@ test('paper: 15 questions are read once, then answered in groups at the same tim
   assert.equal(data.text.split('\n')[14], 'Question 15. Answer to Question 15');
 });
 
+test('paper: quick answers use the shared natural student-answering policy', async () => {
+  const { seen } = await paper(3, 'quick');
+  const prompt = seen.answers()[0].body.contents[0].parts[0].text;
+  assert.match(prompt, /NATURAL STUDENT-ANSWERING POLICY/);
+  assert.match(prompt, /name a recognisable setting or user and describe the real task there/);
+  assert.match(prompt, /Put each point's name and its explanation together in one natural, complete line/);
+  assert.match(prompt, /This is quick mode/);
+  assert.match(prompt, /Do not omit context needed to make a point understandable/);
+});
+
 test('paper: every call asks the model to think as little as it can, and the answer calls keep the photos for diagrams', async () => {
   const { seen } = await paper(15);
   for (const c of seen) assert.deepEqual(c.body.generationConfig.thinkingConfig, { thinkingBudget: 0 }, 'gemini 2.5 gets thinkingBudget 0');
@@ -428,7 +438,10 @@ test('paper: learn mode writes more per question, so its groups are smaller', as
   assert.deepEqual(seen.answers().map((a) => a.given.length), [5, 5, 5]);
   assert.equal(groupSize('learn'), 5);
   assert.equal(data.items.length, 15);
-  assert.match(seen.answers()[0].body.contents[0].parts[0].text, /learn mode[\s\S]*Method:/);
+  const prompt = seen.answers()[0].body.contents[0].parts[0].text;
+  assert.match(prompt, /NATURAL STUDENT-ANSWERING POLICY/);
+  assert.match(prompt, /This is learn mode[\s\S]*Do not automatically append Method, Example/);
+  assert.doesNotMatch(prompt, /add a line \"Method:\"/);
 });
 
 test('paper: an incomplete group is retried and all answers are returned together', async () => {
@@ -531,6 +544,8 @@ test('ask: answers a spoken question using the student key, with the answers as 
   assert.equal('model' in d, false, 'provider model identifiers stay server-side');
   assert.ok(seen.length === 1 && seen[0].key === STUDENT_KEY);
   const sent = seen[0].body.contents[0].parts[0].text;
+  assert.match(sent, /NATURAL STUDENT-ANSWERING POLICY/);
+  assert.match(sent, /For questions about applications, uses, roles or areas/);
   assert.match(sent, /Mitosis is cell division/);
   assert.match(sent, /The student's latest words \(decide from this message, using all context above\): what does that mean/);
 });

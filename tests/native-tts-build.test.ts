@@ -29,6 +29,6 @@ test('Android export refuses to build without native TTS registration', () => {
 
 test('iOS release metadata follows the package version', () => {
   const script = readFileSync(join(root, 'scripts/setup-ios.mjs'), 'utf8');
-  assert.match(script, /const appBuild = '8'/);
-  assert.match(script, /packageMeta\.version \|\| '2\.1\.6'/);
+  assert.match(script, /const appBuild = '9'/);
+  assert.match(script, /packageMeta\.version \|\| '2\.1\.7'/);
 });

@@ -1,3 +1,5 @@
+import { EXAM_STUDENT_ANSWER_STYLE } from './student-answer-style';
+
 const API = 'https://generativelanguage.googleapis.com/v1beta';
 
 // Ask Google which Flash models this key can use, newest first, instead of guessing names.
@@ -63,7 +65,9 @@ export function parseQuestions(raw: string): ExamQuestion[] | null {
   }
 }
 
-export const answerPrompt = (mode: string, questions: ExamQuestion[]) => `The attached images are photos of an exam page. Use them only to see a diagram, table or detail that the wording below leaves out. Answer ONLY the numbered questions listed below, one answer each.
+export const answerPrompt = (mode: 'quick' | 'learn', questions: ExamQuestion[]) => `The attached images are photos of an exam page. Use them only to see a diagram, table or detail that the wording below leaves out. Answer ONLY the numbered questions listed below, one answer each.
+${EXAM_STUDENT_ANSWER_STYLE}
+
 Your answers will be read aloud by a text-to-speech voice one line at a time, and written down by hand, so the SHAPE of each answer matters as much as its content.
 
 Output for each question: n (its number in the list below) and lines (an array of strings). Every string in lines is ONE line that the student hears and writes on its own. Never put several points in one string.
@@ -75,7 +79,7 @@ Output for each question: n (its number in the list below) and lines (an array o
 
 Choose the shape from the wording of the question:
 1. A number of points is asked (state, name, list, identify, outline, give THREE or FOUR ...): exactly that many lines, numbered "1. ...", "2. ...", "3. ...". Each line is a short point, one idea per line.
-2. A number of points to explain, discuss, describe or evaluate (explain THREE advantages, discuss THREE characteristics, ...): for each point use one line with its number and name ("1. Clarity"), then one line starting with "- " that explains it. Exactly the number asked.
+2. A number of points to explain, discuss, describe or evaluate (explain THREE advantages, discuss THREE characteristics, ...): give exactly that many numbered points. Put each point's name and its explanation together in one natural, complete line, for example, "1. Saves time: a spreadsheet calculates totals automatically, so less work is done by hand."
 3. A procedure, steps, "how can one", "outline how", "analyze how one can apply": first an optional line saying what is being done, then one line per step, "Step 1. ...", "Step 2. ...", in order. Include every step needed, and nothing else.
 4. Distinguish, differentiate or compare two things: one line for each, like "Formula: ..." and "Function: ...", then if useful one line starting "Difference: ".
 5. Define, explain the term, describe the purpose, or identify one thing: one single line, a complete sentence or the exact term.
@@ -83,7 +87,9 @@ Choose the shape from the wording of the question:
 7. A calculation: the working as one short line per step, then a last line "Answer: ...".
 When a question gives a number of marks, match the amount of detail to it. The number of points asked ALWAYS wins: THREE means exactly three numbered points.
 
-${mode === 'learn' ? 'This is learn mode. After the answer lines, add a line "Method:" followed by a few short "Step 1. ..." lines, then one line starting "Example: " with one short worked example. Keep every line easy to follow when spoken.' : 'This is quick mode: keep every line as brief as the question allows. For calculations give the working lines and the final result only.'}
+${mode === 'learn'
+  ? 'This is learn mode. Start with the same direct, exam-ready answer required above. Then add further teaching only when it genuinely helps with this question: show working for calculations, explain the reasoning for a concept, or give a short relevant example when it makes the idea clearer. Do not automatically append Method, Example or other template sections to every answer. Do not change the number of required answer points; keep any extra teaching clearly separate and concise.'
+  : 'This is quick mode: give the direct, natural exam-ready answer and keep each line as brief as the question allows. Do not omit context needed to make a point understandable. For calculations, give the necessary working and final result.'}
 
 Questions:
 ${questions.map((q, i) => `${i + 1}. [${q.label}] ${q.text}`).join('\n')}`;

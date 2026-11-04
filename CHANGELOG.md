@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.1.7] - 2026-11-04
+
+### Changed
+- Added one shared natural student-answering policy used by both examination answers and Voice Ask, so responses favour clear, practical explanations over bare textbook category labels.
+- Kept academic terminology, factual accuracy, command words, requested point counts, mathematical notation, code formatting, and the existing API response schemas intact.
+- Refined Quick mode to give concise but meaningful exam-ready points, including the setting and task for application/use questions where relevant.
+- Refined Learn mode to add explanation, working or examples only when they help the specific question instead of forcing `Method:` and `Example:` sections onto every answer.
+- Applied the same natural-language principles to Voice Ask while preserving reader-control actions and its spoken-response format.
+
+### Release metadata
+- Bumped package version to 2.1.7, Android fallback versionCode to 9, and iOS build number to 9.
+
+### Validation
+- Added regression checks confirming the shared policy reaches both Gemini pathways and that Learn mode no longer forces generic teaching sections. See `RELEASE-VALIDATION-2.1.7.md` for passed checks and environment limitations.
+
 ## Unreleased
 
 ### Added
