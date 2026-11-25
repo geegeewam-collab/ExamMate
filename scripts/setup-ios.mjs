@@ -45,7 +45,7 @@ function insertIntoArray(objectText, property, entries) {
 
 let pbx = readFileSync(projectFile, 'utf8');
 const packageMeta = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const appVersion = String(packageMeta.version || '2.1.8');
+const appVersion = String(packageMeta.version || '2.1.9');
 const appBuild = '11';
 // Keep the generated iOS app's marketing/build versions in sync with the source release.
 pbx = pbx.replace(/MARKETING_VERSION\s*=\s*[^;]+;/g, `MARKETING_VERSION = ${appVersion};`);

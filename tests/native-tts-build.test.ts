@@ -29,8 +29,16 @@ test('Android export refuses to build without native TTS registration', () => {
 
 test('iOS release metadata follows the package version', () => {
   const script = readFileSync(join(root, 'scripts/setup-ios.mjs'), 'utf8');
-  assert.match(script, /const appBuild = '10'/);
-  assert.match(script, /packageMeta\.version \|\| '2\.1\.8'/);
+  const gradle = readFileSync(join(root, 'android/app/build.gradle'), 'utf8');
+  const version: string = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+  const escaped = version.replace(/\./g, '\\.');
+  // The fallbacks must match package.json, and iOS and Android must share one build number.
+  assert.match(script, new RegExp(`packageMeta\\.version \\|\\| '${escaped}'`));
+  assert.match(gradle, new RegExp(`appVersionName'\\) \\?: '${escaped}'`));
+  const iosBuild = script.match(/const appBuild = '(\d+)'/)?.[1];
+  const androidBuild = gradle.match(/appVersionCode'\) \?: '(\d+)'/)?.[1];
+  assert.ok(iosBuild, 'iOS build number is set');
+  assert.equal(iosBuild, androidBuild, 'iOS build number matches Android versionCode');
 });
 
 
