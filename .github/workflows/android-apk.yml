@@ -102,7 +102,8 @@ jobs:
             -PappVersionCode=${{ github.run_number }} \
             -PappVersionName=${{ steps.ver.outputs.name }}
 
-      - name: Collect the APK
+      - name: Collect and verify the APK
+        id: apk
         run: |
           APK="$(find android/app/build/outputs/apk/release -name '*.apk' | head -n 1)"
           if [ -z "$APK" ]; then
@@ -112,11 +113,38 @@ jobs:
           cp "$APK" ExamMate.apk
           ls -lh ExamMate.apk
           BT="$(ls -d "${ANDROID_HOME:-/nonexistent}"/build-tools/* 2>/dev/null | sort -V | tail -n 1 || true)"
-          if [ -n "$BT" ] && [ -x "$BT/apksigner" ]; then
-            "$BT/apksigner" verify --print-certs ExamMate.apk || echo "::warning::apksigner could not verify the signature"
-          else
-            echo "::warning::apksigner not found, skipped the signature check"
+          if [ -z "$BT" ] || [ ! -x "$BT/apksigner" ]; then
+            echo "::error::apksigner not found, so the APK signature cannot be checked."
+            exit 1
           fi
+          # Android's own checker. A failure here means phones would say "package is invalid", so never publish it.
+          if ! "$BT/apksigner" verify --verbose --print-certs --min-sdk-version 24 ExamMate.apk; then
+            echo "::error::The APK failed Android's signature verification. It was not published."
+            exit 1
+          fi
+          if [ -x "$BT/zipalign" ] && ! "$BT/zipalign" -c -P 16 -v 4 ExamMate.apk > /dev/null; then
+            echo "::error::The APK is not correctly aligned for installation. It was not published."
+            exit 1
+          fi
+          echo "bytes=$(stat -c %s ExamMate.apk)" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum ExamMate.apk | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Write the release notes
+        run: |
+          VERSION="${{ steps.ver.outputs.name }}"
+          # This version's section of CHANGELOG.md (shown in the in-app update prompt), then the file check details.
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > release-notes.md
+          [ -s release-notes.md ] || echo "Exam Mate $VERSION" > release-notes.md
+          {
+            echo
+            echo "File check: ExamMate.apk is ${{ steps.apk.outputs.bytes }} bytes."
+            echo "SHA-256: ${{ steps.apk.outputs.sha256 }}"
+          } >> release-notes.md
+          cat release-notes.md
 
       - name: Keep a copy on the run page
         uses: actions/upload-artifact@v4
@@ -134,4 +162,4 @@ jobs:
           name: "Exam Mate ${{ steps.ver.outputs.name }}"
           files: ExamMate.apk
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          body_path: release-notes.md

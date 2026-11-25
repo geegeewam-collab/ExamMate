@@ -32,9 +32,10 @@ export default function Download() {
           )}
 
           <ol className="steps">
-            <li><span className="step-num">1</span><div><b>Download and open the file</b><p>If your phone asks, allow installs from your browser or Files app.</p></div></li>
+            <li><span className="step-num">1</span><div><b>Download and open the file</b><p>Open it from Chrome&rsquo;s Downloads or the Files app, not from WhatsApp. If your phone asks, allow installs from that app.</p></div></li>
             <li><span className="step-num">2</span><div><b>Install it</b><p>If Play Protect says the app is unrecognised, tap More details, then Install anyway.</p></div></li>
-            <li><span className="step-num">3</span><div><b>Open Exam Mate and enter your license key</b><p>You only do this once.</p></div></li>
+            <li><span className="step-num">3</span><div><b>Open Exam Mate and enter your license key</b><p>You only do this once. Later versions update from inside the app.</p></div></li>
+            <li><span className="step-num">!</span><div><b>If it says &ldquo;package is invalid&rdquo;</b><p>Delete old ExamMate files from Downloads and download again on stable internet. If it still fails, uninstall the old Exam Mate first, then install. Your license key works again on the same phone.</p></div></li>
           </ol>
 
           <h2 className="dl-platform" style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-0.02em', marginTop: 10 }}>On iPhone</h2>

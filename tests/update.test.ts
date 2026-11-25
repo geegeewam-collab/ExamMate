@@ -44,6 +44,7 @@ test('release repo comes from APP_RELEASES_REPO or the Vercel git repo, and reje
 test('release notes become short plain text', () => {
   const notes = plainNotes("## What's Changed\n* Better answers by [me](https://x.y)\n**Full Changelog**: https://github.com/a/b/compare/v1...v2");
   assert.equal(notes, '• Better answers by me');
+  assert.equal(plainNotes('### Fixes\n- Installs on more phones\n\nFile check: ExamMate.apk is 8734830 bytes.\nSHA-256: abc123'), 'Fixes\n• Installs on more phones', 'file-check lines are for the release page, not the prompt');
 });
 
 test('latest release: version from the tag, the ExamMate.apk asset, cached, optional minimum version', async () => {
@@ -76,4 +77,12 @@ test('Android app can install updates through its own updater plugin', () => {
   const activity = readFileSync(join(root, 'android/app/src/main/java/com/exammate/app/MainActivity.java'), 'utf8');
   assert.match(manifest, /android\.permission\.REQUEST_INSTALL_PACKAGES/);
   assert.match(activity, /registerPlugin\(ExamMateUpdaterPlugin\.class\)/);
+});
+
+test('release APK is signed with v1, v2 and v3 so every phone installer accepts it', () => {
+  const gradle = readFileSync(join(process.cwd(), 'android/app/build.gradle'), 'utf8');
+  for (const scheme of ['V1', 'V2', 'V3']) assert.match(gradle, new RegExp(`enable${scheme}Signing = true`));
+  const workflow = readFileSync(join(process.cwd(), '.github/workflows/android-apk.yml'), 'utf8');
+  assert.match(workflow, /apksigner" verify --verbose/);
+  assert.doesNotMatch(workflow, /could not verify the signature"\s*$/m, 'a failed signature check must stop the release');
 });

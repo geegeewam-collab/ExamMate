@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.1.12] - 2026-11-25
+
+### Installation
+- The APK is now signed with all three Android signature schemes (v1, v2 and v3). Since minSdk 24 it carried only v2, which some phone installers, security scanners and file managers reject as "package is invalid".
+- The release build now runs Android's own signature and alignment checks and refuses to publish an APK that fails them.
+- Release notes come from this changelog, so the in-app update prompt shows what changed. The release page also lists the exact file size and SHA-256, so a download on a phone can be checked.
+- The download page explains how to open the APK and what to do if a phone reports "package is invalid".
+- Bumped version to 2.1.12, Android versionCode and iOS build number to 14.
+
 ## [2.1.11] - 2026-11-25
 
 ### In-app updates (Android)

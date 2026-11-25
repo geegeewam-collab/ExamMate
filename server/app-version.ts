@@ -18,7 +18,7 @@ export function releasesRepo(env: Env = process.env): string {
 export function plainNotes(body: unknown): string {
   return String(body ?? '')
     .split(/\r?\n/)
-    .filter((line) => !/full changelog|^#+\s*what'?s changed\s*$/i.test(line))
+    .filter((line) => !/full changelog|^#+\s*what'?s changed\s*$|^\s*(file check|sha-256):/i.test(line))
     .map((line) => line.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/https?:\/\/\S+/g, '').replace(/^\s*#+\s*/, '').replace(/^\s*[-+*]\s+/, '• ').replace(/[*_`]/g, '').trimEnd())
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
