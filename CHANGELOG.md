@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.1.10] - 2026-11-25
+
+### Release
+- Re-release of 2.1.9. The v2.1.9 build stopped at a release-metadata test with a hard-coded version; that test now reads package.json and checks iOS and Android build numbers match.
+- Bumped version to 2.1.10, Android versionCode and iOS build number to 12.
+
 ## [2.1.9] - 2026-11-25
 
 ### Answers
