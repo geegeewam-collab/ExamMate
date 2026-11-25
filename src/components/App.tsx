@@ -4,6 +4,7 @@ import { DEFAULTS, loadSettings, saveSettings, type Settings } from '../lib/sett
 import { LicenseService } from '../services/license-service';
 import Activation from './Activation';
 import Shell from './Shell';
+import UpdatePrompt from './UpdatePrompt';
 import { Spinner } from './ui';
 
 type Phase = 'loading' | 'locked' | 'stale' | 'ready';
@@ -83,6 +84,7 @@ export default function App() {
       )}
       {phase === 'locked' && <Activation notice={notice} onActivated={() => { setNotice(''); setPhase('ready'); }} />}
       {phase === 'ready' && <Shell settings={settings} update={update} onLocked={lock} />}
+      {phase !== 'loading' && <UpdatePrompt />}
     </>
   );
 }

@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.1.11] - 2026-11-25
+
+### In-app updates (Android)
+- The app checks for a newer GitHub release when it opens and when it comes back to the foreground (at most hourly).
+- "Update now" downloads the APK inside the app with a progress bar and opens Android's installer, which updates in place: no uninstall, and the license, Gemini key and saved papers are kept.
+- "Later" hides the prompt until the first open of the next day. A newer release is offered straight away.
+- First use asks once for Android's "Allow from this source" permission, then continues automatically.
+- The downloaded file is checked to be ExamMate and newer than the installed build. Android itself refuses any APK signed with a different key.
+- New endpoint GET /api/app-version (latest release, cached 5 minutes). Optional MIN_APP_VERSION forces an update with no Later option.
+- Bumped version to 2.1.11, Android versionCode and iOS build number to 13.
+
 ## [2.1.10] - 2026-11-25
 
 ### Release
