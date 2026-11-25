@@ -82,6 +82,7 @@ export default function Shell({
         return n;
       }),
     onLicenseLost: () => { void LicenseService.clear().then(() => onLocked('This license is no longer valid. Enter a valid key to continue.')); },
+    onKeyMissing: (message) => setSetup({ message: message || 'Connect your free Google AI key so Exam Mate can answer questions.' }),
   });
   const assistantRef = useRef(assistant);
   useEffect(() => { assistantRef.current = assistant; }, [assistant]);
@@ -105,10 +106,7 @@ export default function Shell({
       const [o, k] = await Promise.all([LicenseService.isOwner(), GeminiKey.get()]);
       setOwner(o);
       setGeminiKey(k);
-      if (!o && !k && !kv.get('key_prompted', false)) {
-        kv.set('key_prompted', true);
-        setSetup({}); // first launch: walk the student through getting a free key
-      }
+      // No key screen at first launch: it opens the first time the student takes a photo or uses Voice Ask.
     })();
   }, []);
 
@@ -282,7 +280,7 @@ export default function Shell({
   /** Students must connect their Gemini key before the first photo. Returns true when it opened the guide. */
   const needsKeyFirst = () => {
     if (owner === false && !geminiKey) {
-      setSetup({ message: 'Add your free Gemini key first. It lets Exam Mate read your photos.' });
+      setSetup({ message: 'One quick step before your first photo: connect your free Google AI account so Exam Mate can read it.' });
       return true;
     }
     return false;

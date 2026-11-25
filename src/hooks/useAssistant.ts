@@ -17,6 +17,7 @@ interface Args {
   setRate(rate: number): void;
   onAnswered(question: string, answer: string): void;
   onLicenseLost(): void;
+  onKeyMissing(message: string): void;
 }
 
 /** Connects the voice assistant to the reader, the speech engine and the server. */
@@ -83,6 +84,7 @@ export function useAssistant(a: Args): { assistant: VoiceAssistant; state: Assis
     haptics,
     onAnswered: (q, ans) => live.current.onAnswered(q, ans),
     onLicenseLost: () => live.current.onLicenseLost(),
+    onKeyMissing: (message) => live.current.onKeyMissing(message),
   }, { ...DEFAULT_OPTIONS, wakePhrase: wakePhrase(a.settings.wake, a.settings.wakeCustom) }), [recognizer, engine, speech]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

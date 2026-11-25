@@ -60,6 +60,8 @@ export interface AssistantDeps {
   haptics?: { start(): void; thinking(): void; finish(): void; error(): void };
   onAnswered?(question: string, answer: string): void;
   onLicenseLost?(): void;
+  /** The student has no (or a rejected) Gemini key: open the key setup. Plain reader commands keep working. */
+  onKeyMissing?(message: string): void;
 }
 
 export interface AssistantOptions {
@@ -401,6 +403,7 @@ export class VoiceAssistant {
       this.deps.onLicenseLost?.();
       return;
     }
+    if (failure?.kind === 'key') this.deps.onKeyMissing?.(failure.message);
 
     if (!result) {
       // The AI could not be reached. Plain commands still work, so the reader is never left stuck.

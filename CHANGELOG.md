@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.1.13] - 2026-11-25
+
+### What's new
+- Easier setup: the app opens straight away after your license. Google AI is connected only when you first take a photo or use Voice Ask.
+- Connecting Google AI takes about 30 seconds: AI Studio opens inside the app, and when you copy your key and come back, Exam Mate finds it and connects it for you.
+- New phone? Enter your license key and tap Move to this phone. You can do this once every 30 days.
+- Answers now follow the marks printed on the paper, so a 2-mark question gets a short answer and an 8-mark question a fuller one.
+
+### Technical
+- Removed the first-launch key screen; the setup opens on the first photo, or when Voice Ask reports a missing or rejected key.
+- Added @capacitor/clipboard (copied-key detection) and @capacitor/browser (in-app AI Studio). A manual paste field remains.
+- New POST /api/license/transfer, atomic in Redis (Lua), limited to once per 30 days per key. Activating a key that is in use returns code in_use with canTransfer and retryAt. The old phone sees "moved to another phone". An admin Reset also clears the move limit.
+- The photo reader returns printed marks per question; the answer prompt shows "(N marks)" and the length rule uses them.
+- Bumped version to 2.1.13, Android versionCode and iOS build number to 15.
+
 ## [2.1.12] - 2026-11-25
 
 ### Installation

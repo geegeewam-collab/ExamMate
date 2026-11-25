@@ -81,6 +81,7 @@ function setup(opts: { playing?: boolean; ask?: AssistantDeps['ask']; speak?: As
   };
   const answered: string[][] = [];
   let licenseLost = 0;
+  const keyMissing: string[] = [];
   const deps: AssistantDeps = {
     recognizer: rec, reader, clock,
     speak: opts.speak ?? (async (t) => { log.push('speak:' + t); }),
@@ -91,9 +92,10 @@ function setup(opts: { playing?: boolean; ask?: AssistantDeps['ask']; speak?: As
     tones: { ding: () => log.push('ding'), dong: () => log.push('dong'), error: () => log.push('errtone') },
     onAnswered: (q, a) => answered.push([q, a]),
     onLicenseLost: () => { licenseLost++; },
+    onKeyMissing: (m) => { keyMissing.push(m); },
   };
   const a = new VoiceAssistant(deps);
-  return { a, rec, clock, log, answered, lost: () => licenseLost };
+  return { a, rec, clock, log, answered, lost: () => licenseLost, keyMissing };
 }
 
 test('assistant: wake phrase -> pauses the reader -> listens -> answers -> carries on where it was', async () => {
@@ -251,6 +253,15 @@ test('assistant: a revoked license stops everything and tells the app', async ()
   rec.say('hey exam mate'); await settle(); rec.say('what is dna', true); clock.advance(600); await settle();
   assert.equal(lost(), 1);
   assert.ok(!log.includes('resume'));
+});
+
+test('assistant: a missing Gemini key opens the key setup and the reader carries on', async () => {
+  const { a, rec, clock, log, keyMissing, lost } = setup({ ask: async () => { throw new AskFailure('Add your free Gemini key in Settings to ask questions.', 'key'); } });
+  await a.enable({ wake: true });
+  rec.say('hey exam mate'); await settle(); rec.say('what is dna', true); clock.advance(600); await settle();
+  assert.deepEqual(keyMissing, ['Add your free Gemini key in Settings to ask questions.']);
+  assert.equal(lost(), 0, 'the license is untouched');
+  assert.ok(log.includes('resume'), 'reading continues');
 });
 
 test('assistant: a hanging AI times out, aborts its network request, and the reader carries on', async () => {

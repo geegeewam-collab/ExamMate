@@ -25,5 +25,5 @@ COMMAND WORDS (obey strictly; the command word sets the depth):
 - Discuss: each point with a brief explanation and, where relevant, a short example or both sides.
 - Evaluate, assess, justify, to what extent: points for and against, then a one-line judgement.
 - Calculate, solve, find: working, then the result with units.
-- If marks are shown, roughly one point per mark. A stated number of points (THREE, FOUR) always wins.
+- Marks, shown as "(N marks)" after a question, set the length: about one point per mark (for explain or discuss, about one explained point per 2 marks). A stated number of points (THREE, FOUR) always wins.
 - If the question or image is incomplete, say what cannot be determined instead of guessing.`;

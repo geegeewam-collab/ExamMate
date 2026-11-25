@@ -1,4 +1,4 @@
-import { activate, signToken, validDevice, verify, type Store } from './license';
+import { activate, normKey, signToken, transfer, transferAvailability, validDevice, verify, type Store } from './license';
 import { blocked, clientIp, json, recordFail, secret } from './http';
 import { authenticateParentPassword, getAdminState } from './admin-auth';
 
@@ -12,7 +12,27 @@ export async function handleValidate(req: Request, store: Store): Promise<Respon
   const r = await activate(store, secret(), body.licenseKey, body.deviceId);
   if (r.ok) return json({ token: r.token, owner: false });
   if (r.status === 404) await recordFail(store, 'badkey', ip);
+  if (r.inUse) {
+    // The key is on another phone: tell the app whether the student can move it here themselves.
+    const lic = await store.get(normKey(body.licenseKey));
+    const availability = lic ? transferAvailability(lic) : { canTransfer: false };
+    return json({ code: 'in_use', error: r.error, ...availability }, r.status);
+  }
   return json({ error: r.error }, r.status);
+}
+
+/** POST /api/license/transfer  { licenseKey, deviceId }  ->  { token }. Moves the key to this phone (once per 30 days). */
+export async function handleTransfer(req: Request, store: Store): Promise<Response> {
+  if (!secret()) return json({ error: 'The server is missing its settings.' }, 500);
+  const ip = clientIp(req);
+  if (await blocked(store, 'badkey', ip, 15)) {
+    return json({ error: 'Too many wrong keys. Wait a few minutes and try again.' }, 429);
+  }
+  const body = await req.json().catch(() => ({}));
+  const r = await transfer(store, secret(), body?.licenseKey, body?.deviceId);
+  if (r.ok) return json({ token: r.token, owner: false });
+  if (r.status === 404) await recordFail(store, 'badkey', ip);
+  return json({ error: r.error, ...(r.retryAt ? { code: 'cooldown', retryAt: r.retryAt } : {}) }, r.status);
 }
 
 export async function handleVerify(req: Request, store: Store): Promise<Response> {

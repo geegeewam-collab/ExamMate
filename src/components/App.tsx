@@ -25,7 +25,7 @@ export default function App() {
       setPhase('stale');
       return;
     }
-    setNotice(s === 'invalid' ? 'This license is no longer valid. Enter a valid key to continue.' : '');
+    setNotice(s === 'invalid' ? (LicenseService.lastRefusal || 'This license is no longer valid. Enter a valid key to continue.') : '');
     setPhase('locked');
   }, []);
 

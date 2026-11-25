@@ -6,6 +6,8 @@ export interface LicenseStatus {
   isValid: boolean;
   token?: string;
   error?: string;
+  /** Set when the key is active on another phone: whether the student can move it here now, or from when. */
+  inUse?: { canTransfer: boolean; retryAt?: string };
 }
 
 /** valid: server confirmed. offline: server unreachable but confirmed recently. invalid: server refused.
@@ -38,6 +40,9 @@ async function post(path: string, body: unknown, timeoutMs = 15000): Promise<{ s
 }
 
 export class LicenseService {
+  /** The server's reason the last time a stored license was refused (for example, moved to another phone). */
+  static lastRefusal = '';
+
   static async getDeviceId(): Promise<string> {
     const { identifier } = await Device.getId();
     return identifier;
@@ -83,7 +88,27 @@ export class LicenseService {
         await this.store(data.token, false);
         return { isValid: true, token: data.token };
       }
+      if (data.code === 'in_use') {
+        return { isValid: false, error: data.error, inUse: { canTransfer: data.canTransfer === true, retryAt: typeof data.retryAt === 'string' ? data.retryAt : undefined } };
+      }
       return { isValid: false, error: data.error || `Could not activate (server replied ${status}).` };
+    } catch (e) {
+      return { isValid: false, error: (e as Error).message === 'no-url' ? NO_URL : 'Network error. Please check your connection.' };
+    }
+  }
+
+  /** Moves the key from its other phone to this one (signs the other phone out). Allowed once per 30 days. */
+  static async transferLicense(licenseKey: string): Promise<LicenseStatus> {
+    const key = licenseKey.trim().toUpperCase();
+    try {
+      const deviceId = await this.getDeviceId();
+      const { status, data } = await post('/api/license/transfer', { licenseKey: key, deviceId });
+      if (status === 200 && typeof data.token === 'string') {
+        await this.store(data.token, false);
+        return { isValid: true, token: data.token };
+      }
+      if (data.code === 'cooldown') return { isValid: false, error: data.error, inUse: { canTransfer: false, retryAt: data.retryAt } };
+      return { isValid: false, error: data.error || `Could not move the license (server replied ${status}).` };
     } catch (e) {
       return { isValid: false, error: (e as Error).message === 'no-url' ? NO_URL : 'Network error. Please check your connection.' };
     }
@@ -115,12 +140,13 @@ export class LicenseService {
     };
     try {
       const deviceId = await this.getDeviceId();
-      const { status } = await post('/api/license/verify', { token, deviceId });
+      const { status, data } = await post('/api/license/verify', { token, deviceId });
       if (status === 200) {
         await Preferences.set({ key: LAST_OK_KEY, value: String(Date.now()) });
         return 'valid';
       }
       if (status === 401 || status === 403) {
+        this.lastRefusal = typeof data?.error === 'string' ? data.error : '';
         await this.clear();
         return 'invalid';
       }

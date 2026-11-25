@@ -45,7 +45,7 @@ export async function adminPatch(req: Request, store: Store) {
   if (!lic) return reply({ error: 'Key not found.' }, 404);
   if (b.action === 'revoke') lic.status = 'revoked';
   else if (b.action === 'restore') lic.status = 'active';
-  else if (b.action === 'reset') lic.devices = [];
+  else if (b.action === 'reset') { lic.devices = []; delete lic.lastTransferMs; } // a parent reset also clears the 30-day move limit
   else if (b.action === 'rename') lic.label = String(b.label || '').trim().slice(0, 80);
   else return reply({ error: 'Unknown action.' }, 400);
   await store.put(lic);

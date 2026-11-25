@@ -37,18 +37,20 @@ export const resetModelCache = () => { cache = null; working.clear(); };
  * One big call that reads, thinks about and answers 15 questions in a single response is what used to run out of time.
  */
 
-export interface ExamQuestion { label: string; text: string }
+/** marks: the marks printed for the question (0 when none are shown). They set how much the answer should say. */
+export interface ExamQuestion { label: string; text: string; marks?: number }
 
 export const readPrompt = `The attached images are photos of a page of questions, in order. List every question you can read, in the order they appear. Do not answer anything.
 - label: the question number as shown in the photo, like "Question 1" or "Question 2 b". If a question has parts such as (a), (b) or (i), (ii), give each part its own item. If the numbering starts again in a new section, put the section first, like "Section B, Question 1 a".
-- text: the full wording of that question, copied as written, keeping words like THREE or FOUR. For a part, start with the lead-in sentence of its question so the part makes sense on its own. Leave out marks such as (3 marks), section headings and exam instructions.
+- text: the full wording of that question, copied as written, keeping words like THREE or FOUR. For a part, start with the lead-in sentence of its question so the part makes sense on its own. Leave out the marks, section headings and exam instructions.
+- marks: the number of marks printed for that question or part, like (3 marks), [4] or 4mks. Use 0 when no marks are shown. If marks are shown only for a whole question with parts, give each part 0.
 - If a number is cut off at the edge of the photo, carry on the numbering from the question before it. Never skip a question because its number is missing.
 - If part of a question is unreadable, copy what you can and write [unreadable] for the rest. If it depends on a diagram, figure, table, graph, map or picture, end its text with [see diagram].
 - Do not add extra questions, an introduction or commentary.`;
 
 export const readSchema = {
   type: 'OBJECT',
-  properties: { questions: { type: 'ARRAY', items: { type: 'OBJECT', properties: { label: { type: 'STRING' }, text: { type: 'STRING' } }, required: ['label', 'text'] } } },
+  properties: { questions: { type: 'ARRAY', items: { type: 'OBJECT', properties: { label: { type: 'STRING' }, text: { type: 'STRING' }, marks: { type: 'INTEGER' } }, required: ['label', 'text'] } } },
   required: ['questions'],
 };
 
@@ -58,7 +60,15 @@ export function parseQuestions(raw: string): ExamQuestion[] | null {
     const q = JSON.parse(raw).questions;
     if (!Array.isArray(q)) return null;
     return q
-      .map((x: any) => ({ label: String(x.label ?? '').replace(/[.\s]+$/, '').trim(), text: String(x.text ?? '').replace(/\s+/g, ' ').trim() }))
+      .map((x: any) => {
+        const marks = Math.trunc(Number(x.marks));
+        return {
+          label: String(x.label ?? '').replace(/[.\s]+$/, '').trim(),
+          text: String(x.text ?? '').replace(/\s+/g, ' ').trim(),
+          // Ignore nonsense values; a real exam question carries at most a few dozen marks.
+          ...(marks > 0 && marks <= 60 ? { marks } : {}),
+        };
+      })
       .filter((x) => x.text);
   } catch {
     return null;
@@ -88,7 +98,7 @@ ${mode === 'learn'
   : 'QUICK MODE: only the exam answer, each line as short as the command word allows.'}
 
 Questions:
-${questions.map((q, i) => `${i + 1}. [${q.label}] ${q.text}`).join('\n')}`;
+${questions.map((q, i) => `${i + 1}. [${q.label}]${q.marks ? ` (${q.marks} mark${q.marks === 1 ? '' : 's'})` : ''} ${q.text}`).join('\n')}`;
 
 export const answerSchema = {
   type: 'OBJECT',

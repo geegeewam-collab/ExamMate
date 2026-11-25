@@ -1,5 +1,5 @@
 import { Redis } from '@upstash/redis';
-import { parseDeviceClaimResult, type AdminAuthState, type DeviceClaim, type License, type Store } from './license';
+import { parseDeviceClaimResult, parseTransferResult, type AdminAuthState, type DeviceClaim, type License, type Store, type TransferResult } from './license';
 
 let r: Redis | null = null;
 
@@ -20,6 +20,33 @@ if #devices >= maximum then return {'limit'} end
 table.insert(devices, ARGV[1])
 lic.devices = devices
 if not lic.activatedAt or lic.activatedAt == cjson.null then lic.activatedAt = ARGV[2] end
+redis.call('SET', KEYS[1], cjson.encode(lic))
+return {'ok', cjson.encode(lic)}
+`;
+// Same rules as applyTransfer() in license.ts, done atomically so concurrent moves cannot race each other or a claim.
+const TRANSFER_DEVICE_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return {'missing'} end
+local lic = cjson.decode(raw)
+if lic.status ~= 'active' then return {'revoked'} end
+local devices = lic.devices or {}
+for i = 1, #devices do
+  if devices[i] == ARGV[1] then
+    return {'ok', cjson.encode(lic)}
+  end
+end
+local now = tonumber(ARGV[2])
+local cooldown = tonumber(ARGV[3])
+local maximum = tonumber(lic.maxDevices) or 1
+if #devices >= maximum then
+  local last = tonumber(lic.lastTransferMs) or 0
+  if last > 0 and now - last < cooldown then return {'cooldown', tostring(last + cooldown)} end
+  while #devices >= maximum do table.remove(devices, 1) end
+  lic.lastTransferMs = now
+end
+table.insert(devices, ARGV[1])
+lic.devices = devices
+if not lic.activatedAt or lic.activatedAt == cjson.null then lic.activatedAt = ARGV[4] end
 redis.call('SET', KEYS[1], cjson.encode(lic))
 return {'ok', cjson.encode(lic)}
 `;
@@ -56,6 +83,14 @@ export const store: Store = {
       [deviceId, new Date().toISOString()],
     );
     return parseDeviceClaimResult(result);
+  },
+  async transferDevice(key, deviceId, nowMs, cooldownMs): Promise<TransferResult> {
+    const result = await db().eval(
+      TRANSFER_DEVICE_SCRIPT,
+      ['lic:' + key],
+      [deviceId, String(nowMs), String(cooldownMs), new Date(nowMs).toISOString()],
+    );
+    return parseTransferResult(result);
   },
   async getAdminAuthState() {
     return (await db().get<AdminAuthState>('admin:auth')) ?? null;

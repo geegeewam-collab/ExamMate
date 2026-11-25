@@ -9,6 +9,7 @@ export default function Activation({ notice, onActivated }: { notice?: string; o
   const [ownerMode, setOwnerMode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [inUse, setInUse] = useState<{ canTransfer: boolean; retryAt?: string } | null>(null);
   const taps = useRef({ n: 0, t: 0 });
 
   // Tap the app icon 5 times to reveal the owner sign-in (students never need it).
@@ -27,11 +28,26 @@ export default function Activation({ notice, onActivated }: { notice?: string; o
     if (busy || !key.trim()) return;
     setBusy(true);
     setError('');
+    setInUse(null);
     const r = ownerMode ? await LicenseService.activateOwner(key) : await LicenseService.validateLicense(key);
     setBusy(false);
     if (r.isValid) onActivated();
+    else if (r.inUse) setInUse(r.inUse);
     else setError(r.error || 'Could not activate.');
   }
+
+  async function moveHere() {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    const r = await LicenseService.transferLicense(key);
+    setBusy(false);
+    if (r.isValid) onActivated();
+    else if (r.inUse) setInUse(r.inUse);
+    else { setInUse(null); setError(r.error || 'Could not move the license.'); }
+  }
+
+  const retryDate = inUse?.retryAt ? new Date(inUse.retryAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : '';
 
   return (
     <main className="auth">
@@ -56,12 +72,32 @@ export default function Activation({ notice, onActivated }: { notice?: string; o
           <input
             className="field key" value={key} placeholder="EXAM-XXXX-XXXX-XXXX" aria-label="License key"
             autoCapitalize="characters" autoCorrect="off" autoComplete="off" spellCheck={false}
-            onChange={(e) => setKey(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === 'Enter' && submit()}
+            onChange={(e) => { setKey(e.target.value.toUpperCase()); setInUse(null); }} onKeyDown={(e) => e.key === 'Enter' && submit()}
           />
         )}
-        <button className="btn primary lg" onClick={submit} disabled={busy || !key.trim()}>
-          {busy ? <Spinner /> : ownerMode ? 'Sign in' : 'Activate'}
-        </button>
+        {inUse ? (
+          inUse.canTransfer ? (
+            <>
+              <p className="notice">
+                <b>This key is active on another phone.</b> Move it to this phone? The other phone will be signed out.
+                You can move a key once every 30 days.
+              </p>
+              <button className="btn primary lg" onClick={moveHere} disabled={busy}>
+                {busy ? <Spinner /> : 'Move to this phone'}
+              </button>
+              <button className="link" onClick={() => setInUse(null)} disabled={busy}>Cancel</button>
+            </>
+          ) : (
+            <p className="notice">
+              <b>This key is active on another phone</b> and was moved recently{retryDate ? `. It can be moved again on ${retryDate}` : ''}.
+              To use it here sooner, ask the person who gave you the key to reset it.
+            </p>
+          )
+        ) : (
+          <button className="btn primary lg" onClick={submit} disabled={busy || !key.trim()}>
+            {busy ? <Spinner /> : ownerMode ? 'Sign in' : 'Activate'}
+          </button>
+        )}
 
         <div aria-live="polite">
           {error && <p className="error" role="alert"><Icon name="alert" size={16} /> {error}</p>}
@@ -73,7 +109,7 @@ export default function Activation({ notice, onActivated }: { notice?: string; o
         ) : (
           <>
             {SUPPORT_URL && <a className="link" href={SUPPORT_URL} target="_blank" rel="noopener noreferrer">Need a license? Get one</a>}
-            <p className="fine">Each license works on one device.</p>
+            <p className="fine">Each license works on one phone. Got a new phone? Enter the same key and move it.</p>
           </>
         )}
       </section>

@@ -37,3 +37,4 @@ Thumbs.db
 .test-dist/
 
 *.tsbuildinfo
+next-env.d.ts
