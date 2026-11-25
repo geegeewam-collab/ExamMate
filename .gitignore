@@ -35,3 +35,5 @@ Thumbs.db
 
 # Compiled test output
 .test-dist/
+
+*.tsbuildinfo
