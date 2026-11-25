@@ -7,7 +7,7 @@ import { adminCreate, adminDelete, adminGet, adminPatch } from '../../server/adm
 import { handleAdminLogin, handleAdminSessionAction, handleGuestCreate, handleGuestDelete, handleGuestList } from '../../server/admin-auth';
 import { preflight } from '../../server/http';
 import { createLicenses } from '../../server/license';
-import { resetModelCache, toLines, parseAnswers } from '../../server/gemini';
+import { resetModelCache, toLines, parseAnswers, needsPhoto } from '../../server/gemini';
 
 const realFetch = globalThis.fetch;
 beforeEach(() => {
@@ -427,16 +427,23 @@ test('paper: quick answers use the shared natural student-answering policy', asy
   const { seen } = await paper(3, 'quick');
   const prompt = seen.answers()[0].body.contents[0].parts[0].text;
   assert.match(prompt, /NATURAL STUDENT-ANSWERING POLICY/);
-  assert.match(prompt, /name a recognisable setting or user and describe the real task there/);
-  assert.match(prompt, /Put each point's name and its explanation together in one natural, complete line/);
-  assert.match(prompt, /This is quick mode/);
-  assert.match(prompt, /Do not omit context needed to make a point understandable/);
+  assert.match(prompt, /name a real setting or user and the task/);
+  assert.match(prompt, /Never sound AI-generated/);
+  assert.match(prompt, /QUICK MODE/);
+  // Command words decide depth: a highlight/state question must never get explanations.
+  assert.match(prompt, /highlight[^\n]*NO explanation/);
+  assert.match(prompt, /Differentiate, distinguish, contrast: compare both things on the SAME aspect/);
+  assert.match(prompt, /Discuss:/);
 });
 
-test('paper: every call asks the model to think as little as it can, and the answer calls keep the photos for diagrams', async () => {
+test('paper: every call asks the model to think as little as it can, and text-only questions are answered without re-sending photos', async () => {
   const { seen } = await paper(15);
   for (const c of seen) assert.deepEqual(c.body.generationConfig.thinkingConfig, { thinkingBudget: 0 }, 'gemini 2.5 gets thinkingBudget 0');
-  for (const a of seen.answers()) assert.equal(a.body.contents[0].parts.filter((p: any) => p.inline_data).length, 2, 'both photos are attached');
+  assert.equal(seen.reads()[0].body.contents[0].parts.filter((p: any) => p.inline_data).length, 2, 'the read step sees both photos');
+  for (const a of seen.answers()) {
+    assert.equal(a.body.contents[0].parts.filter((p: any) => p.inline_data).length, 0, 'no photos for text-only questions (saves tokens)');
+    assert.doesNotMatch(a.body.contents[0].parts[0].text, /attached photos/);
+  }
   assert.equal(seen.answers()[0].model, seen.reads()[0].model, 'the model that read the photo answers first');
 });
 
@@ -447,7 +454,7 @@ test('paper: learn mode writes more per question, so its groups are smaller', as
   assert.equal(data.items.length, 15);
   const prompt = seen.answers()[0].body.contents[0].parts[0].text;
   assert.match(prompt, /NATURAL STUDENT-ANSWERING POLICY/);
-  assert.match(prompt, /This is learn mode[\s\S]*Do not automatically append Method, Example/);
+  assert.match(prompt, /LEARN MODE[\s\S]*Do not automatically append Method, Example/);
   assert.doesNotMatch(prompt, /add a line \"Method:\"/);
 });
 
@@ -552,7 +559,7 @@ test('ask: answers a spoken question using the student key, with the answers as 
   assert.ok(seen.length === 1 && seen[0].key === STUDENT_KEY);
   const sent = seen[0].body.contents[0].parts[0].text;
   assert.match(sent, /NATURAL STUDENT-ANSWERING POLICY/);
-  assert.match(sent, /For questions about applications, uses, roles or areas/);
+  assert.match(sent, /For uses, roles or applications/);
   assert.match(sent, /Mitosis is cell division/);
   assert.match(sent, /The student's latest words \(decide from this message, using all context above\): what does that mean/);
 });
@@ -691,13 +698,13 @@ test('ask: GEMINI_ASK_MODEL overrides the model', async () => {
   assert.equal(seen[0].model, 'gemini-my-model');
 });
 
-test('ask: all preferred models are attempted without a slow model-list lookup', async () => {
+test('ask: when every preferred model is unavailable it falls back to the models the key can use', async () => {
   const { st, h } = await activated();
-  const seen = fakeAsk(() => google(503, 'temporary model overload'));
+  const seen = fakeAsk((_n, _b, model) => (model.startsWith('gemini-3.') ? google(404, 'model not found') : intent('Fine.')));
   const r = await handleAsk(ask(withKey(h), { question: 'go back a little' }), st);
-  assert.equal(r.status, 502);
-  assert.deepEqual(seen.map((x) => x.model), ['gemini-3.5-flash-lite', 'gemini-3.8-flash']);
-  assert.equal(seen.listed(), 0, 'no extra /models request on the latency-sensitive Ask path');
+  assert.equal(r.status, 200);
+  assert.deepEqual(seen.slice(0, 2).map((x) => x.model), ['gemini-3.5-flash-lite', 'gemini-3.8-flash'], 'preferred models first, no lookup');
+  assert.equal(seen.listed(), 1, 'the model list is fetched only after the preferred models fail');
 });
 
 test('ask: a model that refuses every thinking setting is retried without one, on the same model', async () => {
@@ -792,9 +799,9 @@ test('answers: each point stays on its own line, and a list gets its label on it
 test('answers: the prompt asks for exact counts, numbered points, steps, and no repeated question', async () => {
   const { seen } = await paper(2);
   const p: string = seen.answers()[0].body.contents[0].parts[0].text;
-  assert.match(p, /exactly that many lines/);
+  assert.match(p, /A stated number of points \(THREE, FOUR\) always wins/);
   assert.match(p, /Step 1\./);
-  assert.match(p, /Do NOT repeat or rephrase the question/);
+  assert.match(p, /Do not repeat the question/);
   assert.deepEqual(seen.answers()[0].body.generationConfig.responseSchema.properties.answers.items.required, ['n', 'lines']);
 });
 
@@ -817,4 +824,63 @@ test('parseAnswers still accepts the old single-string answer', () => {
   const m = parseAnswers(JSON.stringify({ answers: [{ n: 1, answer: 'One line.' }, { n: 2, lines: ['a', 'b'] }] }))!;
   assert.equal(m.get(1), 'One line.');
   assert.equal(m.get(2), 'a\nb');
+});
+
+/* ---------------- token saving: photos only where a diagram is needed ---------------- */
+test('needsPhoto: only questions that depend on a picture keep the photo', () => {
+  assert.equal(needsPhoto({ label: 'Q1', text: 'State THREE uses of a spreadsheet.' }), false);
+  assert.equal(needsPhoto({ label: 'Q2', text: 'Label the parts of the cell [see diagram]' }), true);
+  assert.equal(needsPhoto({ label: 'Q3', text: 'Use the table below to calculate the mean.' }), true);
+  assert.equal(needsPhoto({ label: 'Q4', text: 'Explain the circuit shown.' }), true);
+  assert.equal(needsPhoto({ label: 'Q5', text: 'Write the [unreadable] of photosynthesis' }), true);
+  assert.equal(needsPhoto({ label: 'Q6', text: 'Imagine you are a farmer. Discuss two challenges.' }), false, 'word boundary: imagine is not image');
+});
+
+test('paper: a group with a diagram question gets the photos, text-only groups do not', async () => {
+  const { st, h } = await activated();
+  const calls: any[] = [];
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes('/models?')) return new Response(JSON.stringify({ models: [{ name: 'models/gemini-2.5-flash', supportedGenerationMethods: ['generateContent'] }] }));
+    const body = JSON.parse(String(init?.body));
+    if (isReadStep(body)) return reply({ questions: [
+      ...Array.from({ length: 8 }, (_, i) => ({ label: `Question ${i + 1}`, text: 'State one use of a computer.' })),
+      { label: 'Question 9', text: 'Name the parts labelled A and B. [see diagram]' },
+    ] });
+    calls.push(body);
+    return reply({ answers: numbered(body).map((q) => ({ n: q.n, lines: ['ok'] })) });
+  }) as typeof fetch;
+  const res = await handleAnswer(ans(withKey(h), { images: [img], style: 'quick' }), st);
+  assert.equal(res.status, 200);
+  assert.deepEqual(calls.map((b) => b.contents[0].parts.filter((p: any) => p.inline_data).length).sort(), [0, 1]);
+});
+
+/* ---------------- recovery: changing ADMIN_PASSWORD resets the stored password ---------------- */
+test('admin: a new ADMIN_PASSWORD env value replaces the stored password and signs owners out', async () => {
+  const st = memoryStore();
+  const { token: ownerToken } = await (await handleOwner(ownerReq('correct horse battery'), st)).json();
+  assert.equal((await handleVerify(post('/v', { token: ownerToken, deviceId: 'owner-phone-001' }), st)).status, 200);
+  process.env.ADMIN_PASSWORD = 'brand new recovery password';
+  assert.equal((await handleVerify(post('/v', { token: ownerToken, deviceId: 'owner-phone-001' }), st)).status, 403, 'old owner token revoked immediately');
+  assert.equal((await handleAdminLogin(adminLoginReq('correct horse battery', 'admin-phone-001', '7.7.7.1'), st)).status, 401, 'old password no longer works');
+  assert.equal((await handleAdminLogin(adminLoginReq('brand new recovery password', 'admin-phone-001', '7.7.7.2'), st)).status, 200);
+});
+
+test('admin: an in-app password change survives redeploys while ADMIN_PASSWORD is unchanged', async () => {
+  const st = memoryStore();
+  const parent = await parentAdmin(st);
+  const changed = await handleAdminSessionAction(adminActionRequest({ action: 'change-password', currentPassword: 'correct horse battery', newPassword: 'replacement-secure-password-123' }, parent.token, parent.deviceId), st);
+  assert.equal(changed.status, 200);
+  assert.equal((await handleAdminLogin(adminLoginReq('replacement-secure-password-123', 'admin-phone-001', '7.7.7.3'), st)).status, 200);
+  assert.equal((await handleAdminLogin(adminLoginReq('correct horse battery', 'admin-phone-001', '7.7.7.4'), st)).status, 401);
+});
+
+test('admin: a stored record from before fingerprints is adopted, never reset, on upgrade', async () => {
+  const st = memoryStore();
+  await parentAdmin(st);
+  const state = (await st.getAdminAuthState!())!;
+  delete state.envFingerprint;
+  await st.putAdminAuthState!(state);
+  process.env.ADMIN_PASSWORD = 'some other env value';
+  assert.equal((await handleAdminLogin(adminLoginReq('correct horse battery', 'admin-phone-001', '7.7.7.5'), st)).status, 200, 'existing password kept');
 });

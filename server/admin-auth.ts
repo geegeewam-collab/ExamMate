@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import type { AdminAuthState, AdminGuest, Store } from './license';
-import { ownerVersion, signToken } from './license';
+import { adminEnvFingerprint, ownerVersion } from './license';
 import { blocked, clientIp, json, recordFail, secret } from './http';
 
 const scrypt = promisify(scryptCallback);
@@ -25,12 +25,34 @@ function equalHex(a: string, b: string): boolean {
   } catch { return false; }
 }
 
-/** The first deployment's ADMIN_PASSWORD becomes a salted, persisted password record on first admin sign-in. */
+const envFingerprint = (password: string) => adminEnvFingerprint(secret(), password);
+
+/**
+ * The deployment's ADMIN_PASSWORD becomes a salted, persisted password record on first admin sign-in.
+ * Changing ADMIN_PASSWORD later (and redeploying) is the recovery path: it replaces the stored password,
+ * signs out every admin session and owner device, and keeps guests and the parent device. A password changed
+ * inside the app stays in force until ADMIN_PASSWORD is changed again.
+ */
 export async function getAdminState(store: Store): Promise<AdminAuthState | null> {
   if (!store.getAdminAuthState || !store.putAdminAuthState) return null;
-  const found = await store.getAdminAuthState();
-  if (found) return found;
   const bootstrap = process.env.ADMIN_PASSWORD || '';
+  const found = await store.getAdminAuthState();
+  if (found) {
+    if (!bootstrap || !secret()) return found;
+    const fingerprint = envFingerprint(bootstrap);
+    if (found.envFingerprint === fingerprint) return found;
+    if (found.envFingerprint) {
+      // The operator set a new ADMIN_PASSWORD: apply it and sign everyone out.
+      found.salt = randomBytes(16).toString('base64url');
+      found.passwordHash = await hashPassword(bootstrap, found.salt);
+      found.sessionVersion++;
+      found.ownerTokenVersion = ownerVersion(secret(), `${found.salt}:${found.passwordHash}:${found.sessionVersion}`);
+    }
+    // Records created before fingerprints existed only adopt the current value, so upgrading never resets a password.
+    found.envFingerprint = fingerprint;
+    await store.putAdminAuthState(found);
+    return found;
+  }
   if (!bootstrap || !secret()) return null;
   const salt = randomBytes(16).toString('base64url');
   const state: AdminAuthState = {
@@ -40,6 +62,7 @@ export async function getAdminState(store: Store): Promise<AdminAuthState | null
     parentDeviceId: null,
     ownerTokenVersion: ownerVersion(secret(), bootstrap),
     guests: [],
+    envFingerprint: envFingerprint(bootstrap),
   };
   await store.putAdminAuthState(state);
   return state;

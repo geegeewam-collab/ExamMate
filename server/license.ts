@@ -48,7 +48,9 @@ export function parseDeviceClaimResult(raw: unknown): DeviceClaim {
 }
 
 export interface AdminGuest { id: string; username: string; label: string; salt: string; passwordHash: string; active: boolean; createdAt: string }
-export interface AdminAuthState { salt: string; passwordHash: string; sessionVersion: number; parentDeviceId: string | null; ownerTokenVersion: string; guests: AdminGuest[] }
+export interface AdminAuthState { salt: string; passwordHash: string; sessionVersion: number; parentDeviceId: string | null; ownerTokenVersion: string; guests: AdminGuest[];
+  /** Fingerprint of the ADMIN_PASSWORD env value last applied. A new env value resets the parent password. */
+  envFingerprint?: string }
 
 export interface Store {
   get(key: string): Promise<License | null>;
@@ -78,9 +80,13 @@ export function newKey(): string {
 const b64 = (b: Buffer | string) => Buffer.from(b).toString('base64url');
 const mac = (body: string, secret: string) => createHmac('sha256', secret).update(body).digest();
 
-/** Owner tokens carry a version of the admin password, so changing ADMIN_PASSWORD signs every owner device out. */
+/** Owner tokens carry a version of the admin password, so a password change (in the app or via ADMIN_PASSWORD) signs every owner device out. */
 export const ownerVersion = (secret: string, adminPassword: string) =>
   createHash('sha256').update(`${secret}:${adminPassword}`).digest('hex').slice(0, 16);
+
+/** Fingerprint of an ADMIN_PASSWORD env value, stored so a changed env value can be detected without keeping the password. */
+export const adminEnvFingerprint = (secret: string, password: string) =>
+  createHmac('sha256', secret).update('admin-env:' + password).digest('hex').slice(0, 32);
 
 export function signToken(k: string, d: string, secret: string, owner?: { v: string }): string {
   const body = b64(JSON.stringify({ k, d, t: Date.now(), ...(owner ? { o: 1, v: owner.v } : {}) }));
@@ -139,6 +145,10 @@ export async function verify(
   if (p.o) {
     // Existing owner devices are revoked when the parent admin changes their password.
     const authState = await store.getAdminAuthState?.();
+    // A changed ADMIN_PASSWORD revokes owner devices at once, even before the next admin sign-in applies it.
+    if (authState?.envFingerprint && adminPassword && authState.envFingerprint !== adminEnvFingerprint(secret, adminPassword)) {
+      return { ok: false, status: 403, error: 'Owner sign-in expired. Sign in again.' };
+    }
     const currentVersion = authState?.ownerTokenVersion || (adminPassword ? ownerVersion(secret, adminPassword) : '');
     if (!currentVersion || p.v !== currentVersion) return { ok: false, status: 403, error: 'Owner sign-in expired. Sign in again.' };
     return { ok: true, key: 'OWNER', owner: true };

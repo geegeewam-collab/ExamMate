@@ -1,6 +1,6 @@
 import { verify, type Store } from './license';
 import { json, secret } from './http';
-import { answerPrompt, answerSchema, describeFailure, generate, parseAnswers, parseQuestions, readPrompt, readSchema, replyText, type GeminiFail } from './gemini';
+import { answerPrompt, answerSchema, describeFailure, generate, needsPhoto, parseAnswers, parseQuestions, readPrompt, readSchema, replyText, type GeminiFail } from './gemini';
 
 const fail = (code: string, error: string, status: number, detail = '') =>
   json({ code, error, detail: String(detail).slice(0, 240) }, status);
@@ -136,10 +136,12 @@ export async function handleAnswer(req: Request, store: Store): Promise<Response
   // still answering independent groups concurrently. There is no question-count cutoff.
   const answerOneGroup = (group: typeof questions) => {
     const remaining = Math.max(1_500, TOTAL_MS - (Date.now() - started));
+    // Text-only unless a question in this group needs the diagram: re-sending every photo to every group multiplied token use.
+    const withPhotos = group.some(needsPhoto);
     if (req.signal.aborted) return Promise.resolve({ ok: false as const, last: { status: 499, msg: 'client cancelled the request' }, trace: [] });
     return generate(
       apiKey,
-      { contents: [{ parts: [{ text: answerPrompt(style, group) }, ...photos] }], generationConfig: { temperature: 0.2, maxOutputTokens: 16000, responseMimeType: 'application/json', responseSchema: answerSchema } },
+      { contents: [{ parts: [{ text: answerPrompt(style, group, withPhotos) }, ...(withPhotos ? photos : [])] }], generationConfig: { temperature: 0.2, maxOutputTokens: 16000, responseMimeType: 'application/json', responseSchema: answerSchema } },
       (d) => parseAnswers(replyText(d)),
       { models: [read.model], timeoutMs: ANSWER_CALL_MS, deadlineMs: remaining, noThinking: true, signal: req.signal },
     );

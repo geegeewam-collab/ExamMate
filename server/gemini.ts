@@ -43,7 +43,7 @@ export const readPrompt = `The attached images are photos of a page of questions
 - label: the question number as shown in the photo, like "Question 1" or "Question 2 b". If a question has parts such as (a), (b) or (i), (ii), give each part its own item. If the numbering starts again in a new section, put the section first, like "Section B, Question 1 a".
 - text: the full wording of that question, copied as written, keeping words like THREE or FOUR. For a part, start with the lead-in sentence of its question so the part makes sense on its own. Leave out marks such as (3 marks), section headings and exam instructions.
 - If a number is cut off at the edge of the photo, carry on the numbering from the question before it. Never skip a question because its number is missing.
-- If part of a question is unreadable, copy what you can and write [unreadable] for the rest. If it depends on a diagram or table, end its text with [see diagram].
+- If part of a question is unreadable, copy what you can and write [unreadable] for the rest. If it depends on a diagram, figure, table, graph, map or picture, end its text with [see diagram].
 - Do not add extra questions, an introduction or commentary.`;
 
 export const readSchema = {
@@ -65,31 +65,27 @@ export function parseQuestions(raw: string): ExamQuestion[] | null {
   }
 }
 
-export const answerPrompt = (mode: 'quick' | 'learn', questions: ExamQuestion[]) => `The attached images are photos of an exam page. Use them only to see a diagram, table or detail that the wording below leaves out. Answer ONLY the numbered questions listed below, one answer each.
+/** True when a question cannot be answered from its text alone, so the answer call must see the photo. */
+export const needsPhoto = (q: ExamQuestion) => /\[(see diagram|unreadable)\]/i.test(q.text) || /\b(diagram|figure|fig\.|table|graph|chart|map|picture|image|circuit|shown|illustrat)/i.test(q.text);
+
+/**
+ * Prompt for one answer group. Photos are attached only when `withPhotos` is set (a question needs a diagram),
+ * because re-sending every page image to every group multiplied the student's token use.
+ */
+export const answerPrompt = (mode: 'quick' | 'learn', questions: ExamQuestion[], withPhotos = false) => `${withPhotos ? 'The attached photos are the exam page; use them only for diagrams, tables or details the wording leaves out. ' : ''}Answer ONLY the numbered questions below, one answer each.
 ${EXAM_STUDENT_ANSWER_STYLE}
 
-Your answers will be read aloud by a text-to-speech voice one line at a time, and written down by hand, so the SHAPE of each answer matters as much as its content.
-
-Output for each question: n (its number in the list below) and lines (an array of strings). Every string in lines is ONE line that the student hears and writes on its own. Never put several points in one string.
-- Do NOT repeat or rephrase the question, and do not add the question number or label. Start straight with the answer.
-- Use plain text for ordinary answers. Keep mathematical symbols in their correct written form; never replace a symbol with its spoken words. For example, write "x² + 3", "5/8", "x ≥ 10" and "a × b" using the appropriate symbols.
-- For a question asking for a program or source code, return a complete, runnable solution in a fenced code block labelled with its language (for example, language label C). Put each source-code line in its own lines-array element. Preserve indentation, braces, operators, quotes, semicolons, comments, and blank lines exactly. Do not turn code into prose or put several source lines into one array element. Add only a short explanation outside the code block when the question asks for an explanation.
-- For multiple choice, give the option letter and then the option text.
-- If a question is unreadable or something is missing, give one line saying so. No introduction or commentary.
-
-Choose the shape from the wording of the question:
-1. A number of points is asked (state, name, list, identify, outline, give THREE or FOUR ...): exactly that many lines, numbered "1. ...", "2. ...", "3. ...". Each line is a short point, one idea per line.
-2. A number of points to explain, discuss, describe or evaluate (explain THREE advantages, discuss THREE characteristics, ...): give exactly that many numbered points. Put each point's name and its explanation together in one natural, complete line, for example, "1. Saves time: a spreadsheet calculates totals automatically, so less work is done by hand."
-3. A procedure, steps, "how can one", "outline how", "analyze how one can apply": first an optional line saying what is being done, then one line per step, "Step 1. ...", "Step 2. ...", in order. Include every step needed, and nothing else.
-4. Distinguish, differentiate or compare two things: one line for each, like "Formula: ..." and "Function: ...", then if useful one line starting "Difference: ".
-5. Define, explain the term, describe the purpose, or identify one thing: one single line, a complete sentence or the exact term.
-6. Several kinds are asked in one question (for example three types, each with an example): number each type on its own line, then a line starting "- " with its short explanation, then a line starting "- Example: ".
-7. A calculation: the working as one short line per step, then a last line "Answer: ...".
-When a question gives a number of marks, match the amount of detail to it. The number of points asked ALWAYS wins: THREE means exactly three numbered points.
+OUTPUT: for each question, n (its number below) and lines (array of strings). Each string is ONE line the student hears and writes; never put two points in one string.
+- Start straight with the answer. Do not repeat the question or its label.
+- Points: number them "1. ...", "2. ...". Steps: "Step 1. ...". Differences: one line per difference. Calculation: one line per working step, last line "Answer: ...".
+- Keep maths symbols written as symbols (x² + 3, 5/8, x ≥ 10, a × b).
+- Code: a complete runnable solution in a fenced block labelled with its language, one source line per array element, indentation and punctuation exact.
+- Multiple choice: the option letter, then its text.
+- Unreadable or missing: one line saying so.
 
 ${mode === 'learn'
-  ? 'This is learn mode. Start with the same direct, exam-ready answer required above. Then add further teaching only when it genuinely helps with this question: show working for calculations, explain the reasoning for a concept, or give a short relevant example when it makes the idea clearer. Do not automatically append Method, Example or other template sections to every answer. Do not change the number of required answer points; keep any extra teaching clearly separate and concise.'
-  : 'This is quick mode: give the direct, natural exam-ready answer and keep each line as brief as the question allows. Do not omit context needed to make a point understandable. For calculations, give the necessary working and final result.'}
+  ? 'LEARN MODE: give the exam answer first, exactly as above. Then, only if it genuinely helps, add up to two short lines of teaching (the reasoning or one example). Do not automatically append Method, Example or other template sections.'
+  : 'QUICK MODE: only the exam answer, each line as short as the command word allows.'}
 
 Questions:
 ${questions.map((q, i) => `${i + 1}. [${q.label}] ${q.text}`).join('\n')}`;

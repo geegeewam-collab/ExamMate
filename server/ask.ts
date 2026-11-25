@@ -78,7 +78,10 @@ export function parseIntent(raw: string): { action: Action; answer: string } | n
   }
 }
 
-/** Stable Flash models first (no lookup). GEMINI_ASK_MODEL can add an explicit deployment-specific first choice. */
+/**
+ * Preferred fast models, tried first with no lookup. If every one is unavailable (renamed or retired by Google),
+ * generate() falls back to the key's discovered model list, so Voice Ask keeps working. GEMINI_ASK_MODEL can add a first choice.
+ */
 const fastModels = () => [
   process.env.GEMINI_ASK_MODEL,
   'gemini-3.5-flash-lite',
@@ -154,7 +157,7 @@ export async function handleAsk(req: Request, store: Store): Promise<Response> {
     apiKey,
     { contents: [{ parts: [{ text }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 4000, responseMimeType: 'application/json', responseSchema: SCHEMA } },
     (d) => parseIntent((d.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text || '').join('').trim()),
-    { models: fastModels(), timeoutMs: ASK_CALL_MS, deadlineMs: ASK_TOTAL_MS, noThinking: true, discoverModels: false },
+    { models: fastModels(), timeoutMs: ASK_CALL_MS, deadlineMs: ASK_TOTAL_MS, noThinking: true, signal: req.signal },
   );
   if (out.ok) return json({ action: out.value.action, answer: out.value.answer });
   const f = describeFailure(out.last, auth.owner);

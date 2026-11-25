@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.1.9] - 2026-11-25
+
+### Answers
+- Rewrote the answer-style policy around exam command words. State, name, list, identify and highlight questions get short points with no explanation; define, describe, explain, differentiate, compare, discuss, evaluate and calculate each get the depth examiners expect.
+- Added explicit rules against AI-sounding wording (stock openers, filler phrases, hedging, em dashes) so answers read like a prepared student wrote them.
+
+### Token savings
+- Answer calls no longer re-send the page photos for every question group. Photos are attached only to groups containing a question that needs a diagram, table, figure or an unreadable part.
+- Shortened the shared answer prompts, which are sent with every model call.
+
+### Reliability and security
+- Voice Ask tries its preferred fast models first, then falls back to the models the key can actually use, so a renamed or retired model no longer breaks Voice Ask. Cancelled questions now stop the upstream call.
+- Changing ADMIN_PASSWORD and redeploying now resets the stored parent password and signs out every admin session and owner device. A password changed in the app stays in force until ADMIN_PASSWORD changes again. Existing records are adopted on upgrade, never reset.
+- Android backups are disabled so the stored Gemini key and license token are not copied into cloud backups.
+- Bumped version to 2.1.9, Android versionCode and iOS build number to 11.
+
 ## [2.1.8] - 2026-11-04
 
 ### Reliability
